@@ -855,12 +855,42 @@ def descargar_y_transformar(partido_id: str) -> Dict[str, pd.DataFrame]:
 # ------------------------------
 # UI
 # ------------------------------
-st.title("Baskesta")
+# Estilos ligeros (mantener tema claro) y centrado de títulos
+st.markdown(
+    """
+    <style>
+    h1, h2, h3, h4, h5, h6 {
+        text-align: center;
+    }
+    /* Reducir ancho del input de texto */
+    .stTextInput > div > div > input {
+        max-width: 160px;
+        width: 160px;
+        text-align: center;
+    }
+    /* Hacer que el botón tenga el mismo ancho que el input y quede debajo */
+    .stButton > button {
+        max-width: 160px;
+        width: 160px;
+    }
+    /* Centrar el contenedor de entrada */
+    .block-container {
+        padding-top: 1rem;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-with st.sidebar:
-    st.header("Entrada")
-    partido_id_input = st.text_input("ID de partido", value="", placeholder="Ej: 123456")
-    ejecutar = st.button("Descargar y procesar", type="primary")
+st.title("Estadísticas Basquet")
+
+# Entrada en el cuerpo principal, centrada y angosta
+st.subheader("Entrada")
+wrap = st.container()
+colL, colMid, colR = wrap.columns([2, 1, 2])
+with colMid:
+    partido_id_input = st.text_input("ID de partido", value="", placeholder="Ej: 123456", max_chars=6)
+    ejecutar = st.button("Buscar partido", type="primary")
 
 if (ejecutar or ('tablas' in st.session_state)):
     if ejecutar:
@@ -870,33 +900,24 @@ if (ejecutar or ('tablas' in st.session_state)):
             try:
                 with st.spinner("Descargando y procesando datos..."):
                     tablas = descargar_y_transformar(partido_id_input.strip())
-                st.success("Listo")
                 # Persistir en sesión para evitar re-descarga al cambiar filtros
                 st.session_state['tablas'] = tablas
             except Exception as e:
-                st.exception(e)
+                # Mostrar un mensaje claro y corto, sin traza
+                st.error("ID de Partido no encontrado")
                 tablas = None
     else:
         tablas = st.session_state.get('tablas')
 
     if tablas is not None:
-        # Definir nombres de pestañas
-        # Forzar pestaña Estadisticas por jugador si viene de filtros
-        if st.session_state.get('force_estadistica', False):
-            # Reordenar temporalmente para que Estadisticas aparezca primera
-            nombres = ["Estadisticas por jugador", "Resumen", "pbp", "jugadoresAgregado", "qunitetosAgregado"]
-            st.session_state['force_estadistica'] = False
-        else:
-            nombres = ["Resumen", "Estadisticas por jugador", "pbp", "jugadoresAgregado", "qunitetosAgregado"]
-        
-        # Mostrar tablas en pestañas (Resumen primero, sin 'partido' ni 'jugada')
-        # y sin las pestañas crudas de estadisticas_equipolocal/visitante
+        # Mantener orden fijo con 'Estadisticas por jugador' primero para evitar cambios de pestaña al aplicar filtros
+        # Ocultar pestañas pbp, jugadoresAgregado y qunitetosAgregado
+        nombres = ["Estadisticas por jugador", "Resumen"]
+        # Mostrar pestañas
         tabs = st.tabs(nombres)
-        # Mapear referencias por nombre para no depender del índice
-        idx_resumen = nombres.index("Resumen")
-        idx_estadistica = nombres.index("Estadisticas por jugador")
-        t_resumen = tabs[idx_resumen]
-        t_estadistica = tabs[idx_estadistica]
+        # Referencias por nombre
+        t_estadistica = tabs[0]
+        t_resumen = tabs[1]
 
         # Pestaña Resumen
         with t_resumen:
@@ -1384,12 +1405,6 @@ if (ejecutar or ('tablas' in st.session_state)):
                 else:
                     st.info('No hay jugadoresAgregado para generar estadística')
 
-            # Resto de pestañas muestran tablas crudas por ahora
-            with tabs[2]:
-                st.dataframe(tablas.get('pbp', pd.DataFrame()), use_container_width=True)
-            with tabs[3]:
-                st.dataframe(tablas.get('jugadoresAgregado', pd.DataFrame()), use_container_width=True)
-            with tabs[4]:
-                st.dataframe(tablas.get('qunitetosAgregado', pd.DataFrame()), use_container_width=True)
+            # Pestañas adicionales ocultas: no se renderizan
 else:
     st.info("Ingrese un ID de partido, presione 'Descargar y procesar' o use los datos ya descargados previamente.")
