@@ -852,19 +852,45 @@ def procesar_pbp_y_agregados(
             accion = fila.get('accion_tipo')
             tiempo_actual = float(fila.get('tiempo_segundos', 0))
             numero_periodo = fila.get('numero_periodo')
-            situacion = fila.get('SituacionMarcador')
-            ult2min = fila.get('ultimos_dos_minutos')
+            # Determinar estado del marcador y momento al INICIO del intervalo
+            # (desde la fila anterior), como hicimos para jugadores
+            # Si no hay fila anterior, estos valores se completarán cuando exista un intervalo válido
+            situacion_local_prev = None
+            situacion_visit_prev = None
+            ult2min_ant = None
+            dif_ant = None
+            if fila_anterior is not None:
+                try:
+                    dif_ant = float(fila_anterior.get('DifPuntos', 0))
+                except Exception:
+                    dif_ant = 0.0
+                ult2min_ant = fila_anterior.get('ultimos_dos_minutos')
+                # Mapeo de situación desde la perspectiva de cada equipo
+                if dif_ant < -5:
+                    situacion_local_prev = 'Perdiendo 5+'
+                    situacion_visit_prev = 'Ganando 5+'
+                elif dif_ant > 5:
+                    situacion_local_prev = 'Ganando 5+'
+                    situacion_visit_prev = 'Perdiendo 5+'
+                else:
+                    situacion_local_prev = '+-5'
+                    situacion_visit_prev = '+-5'
 
-            quinteto_local = fila.get('quinteto_local')
-            quinteto_visitante = fila.get('quinteto_visitante')
-            if isinstance(quinteto_local, list):
-                quinteto_local = tuple(sorted(quinteto_local))
-            if isinstance(quinteto_visitante, list):
-                quinteto_visitante = tuple(sorted(quinteto_visitante))
-            if quinteto_local is not None and len(quinteto_local) != 5:
-                quinteto_local = None
-            if quinteto_visitante is not None and len(quinteto_visitante) != 5:
-                quinteto_visitante = None
+            # Usar los quintetos de la FILA ANTERIOR para representar quiénes
+            # jugaron el intervalo entre fila_anterior y fila (consistencia con jugadores)
+            quinteto_local_prev = None
+            quinteto_visitante_prev = None
+            if fila_anterior is not None:
+                quinteto_local_prev = fila_anterior.get('quinteto_local')
+                quinteto_visitante_prev = fila_anterior.get('quinteto_visitante')
+                if isinstance(quinteto_local_prev, list):
+                    quinteto_local_prev = tuple(sorted(quinteto_local_prev))
+                if isinstance(quinteto_visitante_prev, list):
+                    quinteto_visitante_prev = tuple(sorted(quinteto_visitante_prev))
+                if quinteto_local_prev is not None and len(quinteto_local_prev) != 5:
+                    quinteto_local_prev = None
+                if quinteto_visitante_prev is not None and len(quinteto_visitante_prev) != 5:
+                    quinteto_visitante_prev = None
 
             if (
                 fila_anterior is not None and
@@ -874,27 +900,25 @@ def procesar_pbp_y_agregados(
                 delta_tiempo = abs(float(fila_anterior.get('tiempo_segundos', 0)) - tiempo_actual)
                 delta_local = float(fila.get('puntosLocal', 0)) - float(fila_anterior.get('puntosLocal', 0))
                 delta_visitante = float(fila.get('puntosVisitante', 0)) - float(fila_anterior.get('puntosVisitante', 0))
-                if quinteto_local is not None:
-                    clave_local = (partido_id3, quinteto_local, 'LOCAL', situacion, ult2min, numero_periodo)
-                    tiempo_quinteto[clave_local] = tiempo_quinteto.get(clave_local, 0) + delta_tiempo
-                    puntos_favor_q[clave_local] = puntos_favor_q.get(clave_local, 0) + delta_local
-                    puntos_contra_q[clave_local] = puntos_contra_q.get(clave_local, 0) + delta_visitante
-                if quinteto_visitante is not None:
-                    clave_vis = (partido_id3, quinteto_visitante, 'VISITANTE', situacion, ult2min, numero_periodo)
-                    tiempo_quinteto[clave_vis] = tiempo_quinteto.get(clave_vis, 0) + delta_tiempo
-                    puntos_favor_q[clave_vis] = puntos_favor_q.get(clave_vis, 0) + delta_visitante
-                    puntos_contra_q[clave_vis] = puntos_contra_q.get(clave_vis, 0) + delta_local
+                # Requerir que ambos quintetos previos sean 5v5 definidos para evitar sobreconteo
+                if quinteto_local_prev is not None and quinteto_visitante_prev is not None:
+                    if quinteto_local_prev is not None:
+                        clave_local = (partido_id3, quinteto_local_prev, 'LOCAL', situacion_local_prev, ult2min_ant, numero_periodo)
+                        tiempo_quinteto[clave_local] = tiempo_quinteto.get(clave_local, 0) + delta_tiempo
+                        puntos_favor_q[clave_local] = puntos_favor_q.get(clave_local, 0) + delta_local
+                        puntos_contra_q[clave_local] = puntos_contra_q.get(clave_local, 0) + delta_visitante
+                    if quinteto_visitante_prev is not None:
+                        clave_vis = (partido_id3, quinteto_visitante_prev, 'VISITANTE', situacion_visit_prev, ult2min_ant, numero_periodo)
+                        tiempo_quinteto[clave_vis] = tiempo_quinteto.get(clave_vis, 0) + delta_tiempo
+                        puntos_favor_q[clave_vis] = puntos_favor_q.get(clave_vis, 0) + delta_visitante
+                        puntos_contra_q[clave_vis] = puntos_contra_q.get(clave_vis, 0) + delta_local
 
-            if accion in acciones_interes:
+            # Contabilizar acciones en función del quinteto vigente al INICIO del instante
+            # (usar quintetos y situación de la fila anterior para consistencia)
+            if accion in acciones_interes and fila_anterior is not None:
                 condicion = str(fila.get('Condicion', '')).upper()
-                if quinteto_local is not None:
-                    clave_local = (partido_id3, quinteto_local, 'LOCAL', situacion, ult2min, numero_periodo)
-                else:
-                    clave_local = None
-                if quinteto_visitante is not None:
-                    clave_vis = (partido_id3, quinteto_visitante, 'VISITANTE', situacion, ult2min, numero_periodo)
-                else:
-                    clave_vis = None
+                clave_local = (partido_id3, quinteto_local_prev, 'LOCAL', situacion_local_prev, ult2min_ant, numero_periodo) if quinteto_local_prev is not None else None
+                clave_vis = (partido_id3, quinteto_visitante_prev, 'VISITANTE', situacion_visit_prev, ult2min_ant, numero_periodo) if quinteto_visitante_prev is not None else None
 
                 if condicion == 'LOCAL':
                     if clave_local is not None:
@@ -996,7 +1020,8 @@ def descargar_y_transformar(partido_id: str) -> Dict[str, pd.DataFrame]:
         'estadisticas_equipovisitante': visitante_df,
         'pbp': pbp_df,
         'jugadoresAgregado': jugadores_df,
-        'qunitetosAgregado': quintetos_df,
+        # Mantener clave legacy y agregar la correcta
+        'quintetosAgregado': quintetos_df,
     }
 
 
@@ -1061,14 +1086,15 @@ if (ejecutar or ('tablas' in st.session_state)):
 
     if tablas is not None:
         # Mantener orden fijo pero mostrando primero 'Resumen' al abrir la app
-        # Pestañas: Resumen, Estadisticas por jugador, Estadistica por Quintetos
-        nombres = ["Resumen", "Estadisticas por jugador", "Estadistica por Quintetos"]
+        # Pestañas: Resumen, Estadisticas por jugador, Estadistica por Quintetos, quintetosAgregado
+        nombres = ["Resumen", "Estadisticas por jugador", "Estadistica por Quintetos", "quintetosAgregado"]
         # Mostrar pestañas
         tabs = st.tabs(nombres)
         # Referencias por nombre
         t_resumen = tabs[0]
         t_estadistica = tabs[1]
         t_quintetos = tabs[2]
+        t_quintetos_raw = tabs[3]
 
         # Pestaña Resumen
         with t_resumen:
@@ -1457,6 +1483,35 @@ if (ejecutar or ('tablas' in st.session_state)):
                         except Exception as e:
                             st.warning(f"No se pudieron calcular las marcas de máximo/mínimo: {e}")
 
+                        # Marcar tiempos muertos solicitados con puntos del color del equipo
+                        try:
+                            tm = dfp[dfp.get('accion_tipo', '').astype(str) == 'TIEMPO-MUERTO-SOLICITADO'].copy()
+                            if not tm.empty:
+                                # Asegurar columnas necesarias
+                                if 'DifPuntos_num' not in tm.columns:
+                                    tm['DifPuntos_num'] = pd.to_numeric(tm.get('puntosLocal', 0), errors='coerce').fillna(0) - pd.to_numeric(tm.get('puntosVisitante', 0), errors='coerce').fillna(0)
+                                tm['EquipoTM'] = np.where(tm.get('Condicion', '').astype(str).str.upper()=='LOCAL', local_name, visitante_name)
+                                tm_color = alt.Scale(domain=[local_name, visitante_name], range=[color_local, color_visitante])
+                                tm_points = (
+                                    alt.Chart(tm)
+                                    .mark_point(filled=True, size=180, stroke='#000', strokeWidth=0.5)
+                                    .encode(
+                                        x=alt.X('x_period:Q'),
+                                        y=alt.Y('DifPuntos_num:Q'),
+                                        color=alt.Color('EquipoTM:N', scale=tm_color, legend=alt.Legend(orient='top-left', title='Tiempo muerto')),
+                                        tooltip=[
+                                            alt.Tooltip('EquipoTM:N', title='Equipo'),
+                                            alt.Tooltip('numero_periodo:Q', title='Periodo'),
+                                            alt.Tooltip('tiempo_segundos:Q', title='Tiempo (s)'),
+                                            alt.Tooltip('DifPuntos_num:Q', title='Dif puntos')
+                                        ]
+                                    )
+                                    .transform_filter(brush)
+                                )
+                                diff_chart = diff_chart + tm_points
+                        except Exception:
+                            pass
+
                         diff_chart = diff_chart.add_params(brush)
                         # Guardar para renderizar en columnas
                         diff_chart_full = diff_chart
@@ -1809,6 +1864,223 @@ if (ejecutar or ('tablas' in st.session_state)):
 
             # (Se eliminó la fila 3 comparativa en Resumen a pedido del usuario)
 
+            # Comparativa de totales (desde "estadisticas por jugador")
+            try:
+                jg_tot = tablas.get('jugadoresAgregado', pd.DataFrame()).copy()
+                if isinstance(jg_tot, pd.DataFrame) and not jg_tot.empty:
+                    # Respetar filtro de periodo de la pestaña (si existe columna y selección)
+                    if 'sel_periodo' in locals() and sel_periodo != 'TODOS':
+                        if 'numero_periodo' in jg_tot.columns:
+                            try:
+                                sel_val = int(sel_periodo)
+                                jg_tot = jg_tot[pd.to_numeric(jg_tot['numero_periodo'], errors='coerce') == sel_val].copy()
+                            except Exception:
+                                pass
+                    # Normalizar Condicion
+                    if 'Condicion' in jg_tot.columns:
+                        jg_tot['Condicion'] = jg_tot['Condicion'].astype(str).str.upper().fillna('')
+                    # Mapeo estricto como en la tabla de jugadores
+                    strict_map = [
+                        ('ASISTENCIA', 'asistencias'),
+                        ('CANASTA-1P', 'canasta1p'),
+                        ('CANASTA-2P', 'canasta2p'),
+                        ('CANASTA-3P', 'canasta3p'),
+                        ('FALTA-COMETIDA', 'faltascometidas'),
+                        ('FALTA-RECIBIDA', 'faltasrecibidas'),
+                        ('PERDIDA', 'perdidas'),
+                        ('REBOTE-DEFENSIVO', 'rebotedefensivo'),
+                        ('REBOTE-OFENSIVO', 'reboteofensivo'),
+                        ('RECUPERACION', 'recuperaciones'),
+                        ('TIRO1-FALLADO', 'tiro1fallado'),
+                        ('TIRO2-FALLADO', 'tiro2fallado'),
+                        ('TIRO3-FALLADO', 'tiro3fallado'),
+                    ]
+                    for src, dst in strict_map:
+                        if src in jg_tot.columns:
+                            jg_tot[dst] = pd.to_numeric(jg_tot[src], errors='coerce').fillna(0)
+                        elif dst not in jg_tot.columns:
+                            jg_tot[dst] = 0
+                    # Derivadas
+                    jg_tot['rebotetotal'] = jg_tot['rebotedefensivo'] + jg_tot['reboteofensivo']
+                    jg_tot['puntos'] = jg_tot['canasta1p'] + 2*jg_tot['canasta2p'] + 3*jg_tot['canasta3p']
+                    # Plus-minus
+                    pm_cands = ['diferencia', 'plusminus', 'plus_minus', '+-']
+                    pm_series = None
+                    for pmc in pm_cands:
+                        if pmc in jg_tot.columns:
+                            s = pd.to_numeric(jg_tot[pmc], errors='coerce').fillna(0)
+                            pm_series = s if pm_series is None else (pm_series + s)
+                    if pm_series is None:
+                        jg_tot['pm'] = 0
+                    else:
+                        jg_tot['pm'] = pm_series
+
+                    # Sumar por condicion
+                    vars_keep = {
+                        'puntos': 'Puntos',
+                        'rebotedefensivo': 'Rebote Def.',
+                        'reboteofensivo': 'Rebote Of.',
+                        'rebotetotal': 'Rebotes Totales',
+                        'asistencias': 'Asistencias',
+                        'perdidas': 'Pérdidas',
+                        'recuperaciones': 'Recuperaciones',
+                        'pm': '+/-',
+                    }
+                    agg_tot = (
+                        jg_tot.groupby('Condicion')[list(vars_keep.keys())]
+                        .sum(numeric_only=True)
+                        .reset_index()
+                    )
+                    # Asegurar presencia de ambas filas LOCAL y VISITANTE con 0s si faltan
+                    needed = ['LOCAL', 'VISITANTE']
+                    for cond in needed:
+                        if cond not in agg_tot['Condicion'].astype(str).tolist():
+                            row0 = {**{k: 0.0 for k in vars_keep.keys()}, 'Condicion': cond}
+                            agg_tot = pd.concat([agg_tot, pd.DataFrame([row0])], ignore_index=True)
+                    # Preparar tidy para Altair
+                    def equipo_name(cond):
+                        return local_name if str(cond).upper()=='LOCAL' else (visitante_name if str(cond).upper()=='VISITANTE' else str(cond))
+                    rows = []
+                    for _, r in agg_tot.iterrows():
+                        eq = equipo_name(r['Condicion'])
+                        for k, label in vars_keep.items():
+                            rows.append({'Equipo': eq, 'Variable': label, 'Valor': float(r.get(k, 0))})
+                    df_vars = pd.DataFrame(rows)
+                    if not df_vars.empty:
+                        # Colores por equipo y helper de chart
+                        color_scale = alt.Scale(domain=[local_name, visitante_name], range=[color_local, color_visitante])
+
+                        # Construir agregados por equipo para porcentajes
+                        def ensure_cols(df, cols):
+                            for c in cols:
+                                if c not in df.columns:
+                                    df[c] = 0
+                            return df
+                        jg_cnt = jg_tot.copy()
+                        jg_cnt = ensure_cols(jg_cnt, ['CANASTA-1P','TIRO1-FALLADO','CANASTA-2P','TIRO2-FALLADO','CANASTA-3P','TIRO3-FALLADO'])
+                        grp_cnt = (
+                            jg_cnt.groupby('Condicion')[['CANASTA-1P','TIRO1-FALLADO','CANASTA-2P','TIRO2-FALLADO','CANASTA-3P','TIRO3-FALLADO']]
+                            .sum(numeric_only=True)
+                            .reset_index()
+                        )
+                        # Asegurar filas para ambos equipos
+                        for cond in ['LOCAL','VISITANTE']:
+                            if cond not in grp_cnt['Condicion'].astype(str).tolist():
+                                grp_cnt = pd.concat([
+                                    grp_cnt,
+                                    pd.DataFrame([{'Condicion': cond, 'CANASTA-1P':0,'TIRO1-FALLADO':0,'CANASTA-2P':0,'TIRO2-FALLADO':0,'CANASTA-3P':0,'TIRO3-FALLADO':0}])
+                                ], ignore_index=True)
+
+                        def equipo_name(cond):
+                            return local_name if str(cond).upper()=='LOCAL' else (visitante_name if str(cond).upper()=='VISITANTE' else str(cond))
+
+                        def bar_chart_for(variable_label, valores_dict, y_title='Total', is_percent=False):
+                            data = [{'Equipo': k, 'Valor': valores_dict.get(k, 0)} for k in [local_name, visitante_name]]
+                            dfc = pd.DataFrame(data)
+                            enc_y = alt.Y('Valor:Q', title=y_title, scale=alt.Scale(domain=[0,100])) if is_percent else alt.Y('Valor:Q', title=y_title)
+                            # Barras
+                            bars = (
+                                alt.Chart(dfc)
+                                .mark_bar()
+                                .encode(
+                                    x=alt.X('Equipo:N', title=None, sort=[local_name, visitante_name], axis=alt.Axis(labelAngle=315)),
+                                    y=enc_y,
+                                    color=alt.Color('Equipo:N', scale=color_scale, legend=None),
+                                    tooltip=[alt.Tooltip('Equipo:N'), alt.Tooltip('Valor:Q', format='.0f' if not is_percent else '.0f')]
+                                )
+                            )
+                            # Etiquetas
+                            if is_percent:
+                                text = (
+                                    alt.Chart(dfc)
+                                    .transform_calculate(label="toString(round(datum.Valor)) + '%'")
+                                    .mark_text(dy=-6, fontSize=16, fontWeight='bold')
+                                    .encode(
+                                        x=alt.X('Equipo:N', sort=[local_name, visitante_name], axis=alt.Axis(labelAngle=315)),
+                                        y=enc_y,
+                                        text='label:N',
+                                        color=alt.value('#000000')
+                                    )
+                                )
+                            else:
+                                text = (
+                                    alt.Chart(dfc)
+                                    .mark_text(dy=-6, fontSize=16, fontWeight='bold')
+                                    .encode(
+                                        x=alt.X('Equipo:N', sort=[local_name, visitante_name], axis=alt.Axis(labelAngle=315)),
+                                        y=enc_y,
+                                        text=alt.Text('Valor:Q', format='.0f'),
+                                        color=alt.value('#000000')
+                                    )
+                                )
+                            return (bars + text).properties(height=340, title=variable_label)
+
+                        # Calcular valores por equipo
+                        def get_total(cond, col):
+                            try:
+                                return float(agg_tot.loc[agg_tot['Condicion'].astype(str)==cond, col].sum())
+                            except Exception:
+                                return 0.0
+                        # Puntos y rebotes/asist/perd/recup
+                        vals_puntos = {equipo_name('LOCAL'): get_total('LOCAL','puntos'), equipo_name('VISITANTE'): get_total('VISITANTE','puntos')}
+                        vals_rd = {equipo_name('LOCAL'): get_total('LOCAL','rebotedefensivo'), equipo_name('VISITANTE'): get_total('VISITANTE','rebotedefensivo')}
+                        vals_ro = {equipo_name('LOCAL'): get_total('LOCAL','reboteofensivo'), equipo_name('VISITANTE'): get_total('VISITANTE','reboteofensivo')}
+                        vals_rt = {equipo_name('LOCAL'): get_total('LOCAL','rebotetotal'), equipo_name('VISITANTE'): get_total('VISITANTE','rebotetotal')}
+                        vals_ast = {equipo_name('LOCAL'): get_total('LOCAL','asistencias'), equipo_name('VISITANTE'): get_total('VISITANTE','asistencias')}
+                        vals_per = {equipo_name('LOCAL'): get_total('LOCAL','perdidas'), equipo_name('VISITANTE'): get_total('VISITANTE','perdidas')}
+                        vals_rec = {equipo_name('LOCAL'): get_total('LOCAL','recuperaciones'), equipo_name('VISITANTE'): get_total('VISITANTE','recuperaciones')}
+
+                        # Porcentajes
+                        def pct(conv, fall):
+                            a = conv + fall
+                            return (conv / a * 100.0) if a > 0 else 0.0
+                        def get_pct(cond, conv_col, miss_col):
+                            row = grp_cnt[grp_cnt['Condicion'].astype(str)==cond]
+                            c = float(row[conv_col].sum()) if not row.empty else 0.0
+                            m = float(row[miss_col].sum()) if not row.empty else 0.0
+                            return pct(c, m)
+                        vals_1p = {
+                            equipo_name('LOCAL'): get_pct('LOCAL','CANASTA-1P','TIRO1-FALLADO'),
+                            equipo_name('VISITANTE'): get_pct('VISITANTE','CANASTA-1P','TIRO1-FALLADO')
+                        }
+                        vals_2p = {
+                            equipo_name('LOCAL'): get_pct('LOCAL','CANASTA-2P','TIRO2-FALLADO'),
+                            equipo_name('VISITANTE'): get_pct('VISITANTE','CANASTA-2P','TIRO2-FALLADO')
+                        }
+                        vals_3p = {
+                            equipo_name('LOCAL'): get_pct('LOCAL','CANASTA-3P','TIRO3-FALLADO'),
+                            equipo_name('VISITANTE'): get_pct('VISITANTE','CANASTA-3P','TIRO3-FALLADO')
+                        }
+
+                        # Render en grilla 5 por fila
+                        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+                        st.subheader('Comparativas por variable (Local vs Visitante)')
+                        row1 = st.columns(5)
+                        with row1[0]:
+                            st.altair_chart(bar_chart_for('Puntos', vals_puntos, 'Total'), use_container_width=True)
+                        with row1[1]:
+                            st.altair_chart(bar_chart_for('%1P', vals_1p, '%', is_percent=True), use_container_width=True)
+                        with row1[2]:
+                            st.altair_chart(bar_chart_for('%2P', vals_2p, '%', is_percent=True), use_container_width=True)
+                        with row1[3]:
+                            st.altair_chart(bar_chart_for('%3P', vals_3p, '%', is_percent=True), use_container_width=True)
+                        with row1[4]:
+                            st.altair_chart(bar_chart_for('Reb. Def.', vals_rd, 'Total'), use_container_width=True)
+
+                        row2 = st.columns(5)
+                        with row2[0]:
+                            st.altair_chart(bar_chart_for('Reb. Of.', vals_ro, 'Total'), use_container_width=True)
+                        with row2[1]:
+                            st.altair_chart(bar_chart_for('Reb. Tot.', vals_rt, 'Total'), use_container_width=True)
+                        with row2[2]:
+                            st.altair_chart(bar_chart_for('Asistencias', vals_ast, 'Total'), use_container_width=True)
+                        with row2[3]:
+                            st.altair_chart(bar_chart_for('Pérdidas', vals_per, 'Total'), use_container_width=True)
+                        with row2[4]:
+                            st.altair_chart(bar_chart_for('Recuperaciones', vals_rec, 'Total'), use_container_width=True)
+            except Exception as e:
+                st.warning(f"No se pudo construir la comparativa de totales: {e}")
+
             # Pestaña Estadisticas por jugador (desde jugadoresAgregado por jugador, con Totales y derivadas)
             with t_estadistica:
                 part_df = tablas.get('partido', pd.DataFrame())
@@ -1980,7 +2252,7 @@ if (ejecutar or ('tablas' in st.session_state)):
                 part_df = tablas.get('partido', pd.DataFrame())
                 local_title = str(part_df.iloc[0].get('local')) if not part_df.empty else 'Local'
                 visitante_title = str(part_df.iloc[0].get('visitante')) if not part_df.empty else 'Visitante'
-                qg = tablas.get('qunitetosAgregado', pd.DataFrame()).copy()
+                qg = tablas.get('quintetosAgregado', pd.DataFrame()).copy()
                 if not qg.empty:
                     # Normalizar
                     if 'Condicion' in qg.columns:
