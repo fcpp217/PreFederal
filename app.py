@@ -1949,6 +1949,38 @@ if (ejecutar or ('tablas' in st.session_state)):
                                     pts_tit_vis = sum_pts('VISITANTE', tit_vis)
                                     pts_sup_vis = sum_pts('VISITANTE', supl_vis)
 
+                                    # Puntos en la zona (def: apariciones de CANASTA-2P * 2) respetando filtros de periodo aplicados a dfp
+                                    try:
+                                        df_zone = dfp.copy()
+                                        if 'accion_tipo' in df_zone.columns:
+                                            at2 = df_zone['accion_tipo'].astype(str).str.upper()
+                                            df_zone['__is_c2p'] = (at2 == 'CANASTA-2P')
+                                        else:
+                                            df_zone['__is_c2p'] = False
+                                        if 'Condicion' in df_zone.columns:
+                                            df_zone['Condicion'] = df_zone['Condicion'].astype(str).str.upper().fillna('')
+                                        # Detectar columna de zona
+                                        zona_candidates = ['zona', 'zona_tiro', 'tiro_zona', 'zona_accion', 'zona_tiro_codigo', 'zonaCodigo', 'zona_codigo']
+                                        zona_col = None
+                                        for zc in zona_candidates:
+                                            if zc in df_zone.columns:
+                                                zona_col = zc
+                                                break
+                                        if zona_col is not None:
+                                            zvals = df_zone[zona_col].astype(str).fillna('')
+                                            df_zone['__is_z1'] = zvals.str.upper().str.startswith('Z1-')
+                                        else:
+                                            df_zone['__is_z1'] = False
+                                        mask_loc = (df_zone['Condicion']=='LOCAL') & df_zone['__is_c2p'] & df_zone['__is_z1']
+                                        mask_vis = (df_zone['Condicion']=='VISITANTE') & df_zone['__is_c2p'] & df_zone['__is_z1']
+                                        cnt_loc = int(df_zone[mask_loc].shape[0])
+                                        cnt_vis = int(df_zone[mask_vis].shape[0])
+                                        pzona_loc = 2 * cnt_loc
+                                        pzona_vis = 2 * cnt_vis
+                                    except Exception:
+                                        pzona_loc = 0
+                                        pzona_vis = 0
+
                                     # Tarjetas (posición original), con contenido reordenado
                                     st.markdown(
                                         f"""
@@ -1956,6 +1988,7 @@ if (ejecutar or ('tablas' in st.session_state)):
                                             <div style='font-weight:700;margin-bottom:6px;'>{local_name}</div>
                                             <div>Puntos titulares: <strong>{int(pts_tit_loc)}</strong></div>
                                             <div>Puntos suplentes: <strong>{int(pts_sup_loc)}</strong></div>
+                                            <div>Puntos en la zona (Z1): <strong>{int(pzona_loc)}</strong></div>
                                             <div>Mejor racha: <strong>{best_L_pts}-0</strong> ({fmt_when(sL, eL) if sL is not None else ''})</div>
                                             <div>Mayor sequía: <strong>{fmt_drought_tuple(drought_best_L)}</strong></div>
                                         </div>
@@ -1963,6 +1996,7 @@ if (ejecutar or ('tablas' in st.session_state)):
                                             <div style='font-weight:700;margin-bottom:6px;'>{visitante_name}</div>
                                             <div>Puntos titulares: <strong>{int(pts_tit_vis)}</strong></div>
                                             <div>Puntos suplentes: <strong>{int(pts_sup_vis)}</strong></div>
+                                            <div>Puntos en la zona (Z1): <strong>{int(pzona_vis)}</strong></div>
                                             <div>Mejor racha: <strong>{best_V_pts}-0</strong> ({fmt_when(sV, eV) if sV is not None else ''})</div>
                                             <div>Mayor sequía: <strong>{fmt_drought_tuple(drought_best_V)}</strong></div>
                                         </div>
@@ -3074,6 +3108,16 @@ if (ejecutar or ('tablas' in st.session_state)):
                                     # Alto suficiente: ~28px por jugador
                                     players_count = len(y_order_loc) if y_order_loc else intervals_df['player'].nunique()
                                     chart_height = max(380, 28 * players_count)
+                                    # Halo para mejorar contraste + línea principal
+                                    halo_loc = (
+                                        alt.Chart(intervals_df)
+                                        .mark_rule(color='#000000', strokeWidth=9, opacity=0.15)
+                                        .encode(
+                                            x=alt.X('x1:Q', title='Tiempo (x_period)'),
+                                            x2='x2:Q',
+                                            y=alt.Y('player:N', sort=y_order_loc if y_order_loc else None, title='Jugador (Local)', axis=alt.Axis(labelFontSize=13))
+                                        )
+                                    )
                                     base = (
                                         alt.Chart(intervals_df)
                                         .mark_rule(color=color_local, strokeWidth=6)
@@ -3092,7 +3136,7 @@ if (ejecutar or ('tablas' in st.session_state)):
                                         if prev is not None and cur != prev:
                                             period_changes.append({'x_period': rp.get('x_period'), 'numero_periodo': cur})
                                         prev = cur
-                                    chart_loc = base
+                                    chart_loc = halo_loc + base
                                     if period_changes:
                                         rules_df = pd.DataFrame(period_changes)
                                         rules = alt.Chart(rules_df).mark_rule(color='#333333', strokeDash=[8,4], strokeWidth=3).encode(
@@ -3126,7 +3170,51 @@ if (ejecutar or ('tablas' in st.session_state)):
                                                 .encode(x=alt.X('x_period:Q'), y=alt.Y('player:N', sort=y_order_loc if y_order_loc else None))
                                             )
                                             chart_loc = chart_loc + sale_layer
+                                    # Marcas de tiros (LOCAL)
+                                    if 'accion_tipo' in dfp.columns and 'Condicion' in dfp.columns:
+                                        shots = dfp[(dfp['Condicion'].astype(str).str.upper()=='LOCAL') & (dfp['accion_tipo'].isin([
+                                            'CANASTA-1P','TIRO1-FALLADO','CANASTA-2P','TIRO2-FALLADO','CANASTA-3P','TIRO3-FALLADO'
+                                        ]))].copy()
+                                        if not shots.empty:
+                                            shots['player'] = shots.get('nombre','').astype(str)
+                                            # Separación adicional: ajustar levemente el tiempo (x) según tipo y si fue convertido/fallado
+                                            try:
+                                                at = shots['accion_tipo'].astype(str)
+                                                tipo_num = at.str.extract(r'(\d)P', expand=False).fillna('0').astype(int)
+                                                is_made = at.str.startswith('CANASTA-')
+                                                base_off = np.where(is_made, 0.25, -0.25)
+                                                tipo_off = np.where(tipo_num == 1, 0.00, np.where(tipo_num == 2, 0.08, 0.16))
+                                                xper = pd.to_numeric(shots.get('x_period', 0), errors='coerce').fillna(0)
+                                                shots['__x_adj'] = xper + base_off + tipo_off
+                                            except Exception:
+                                                shots['__x_adj'] = shots.get('x_period', 0)
+                                            # Definir capas por tipo usando glifos de texto (✔ para convertidos, ✚ para fallados) con offset para no taparse
+                                            def shot_layer_text(df_in, color_hex, glyph, dx_px):
+                                                if df_in.empty:
+                                                    return None
+                                                return (
+                                                    alt.Chart(df_in)
+                                                    .mark_text(fontWeight='bold', fontSize=26, color=color_hex, stroke='black', strokeWidth=0.6, dx=dx_px)
+                                                    .encode(
+                                                        x=alt.X('__x_adj:Q'),
+                                                        y=alt.Y('player:N', sort=y_order_loc if y_order_loc else None),
+                                                        text=alt.value(glyph)
+                                                    )
+                                                )
+                                            grn = '#2e7d32'
+                                            red = '#c62828'
+                                            # Offsets: convertidos +8px, fallados -8px (para mismo tiempo)
+                                            l_m1 = shot_layer_text(shots[shots['accion_tipo']=='CANASTA-1P'], grn, '1', 8)
+                                            l_x1 = shot_layer_text(shots[shots['accion_tipo']=='TIRO1-FALLADO'], red, '1', -8)
+                                            l_m2 = shot_layer_text(shots[shots['accion_tipo']=='CANASTA-2P'], grn, '2', 8)
+                                            l_x2 = shot_layer_text(shots[shots['accion_tipo']=='TIRO2-FALLADO'], red, '2', -8)
+                                            l_m3 = shot_layer_text(shots[shots['accion_tipo']=='CANASTA-3P'], grn, '3', 8)
+                                            l_x3 = shot_layer_text(shots[shots['accion_tipo']=='TIRO3-FALLADO'], red, '3', -8)
+                                            for lyr in [l_m1,l_x1,l_m2,l_x2,l_m3,l_x3]:
+                                                if lyr is not None:
+                                                    chart_loc = chart_loc + lyr
                                     st.altair_chart(chart_loc, use_container_width=True)
+                                    st.caption("1 verde: 1P convertido · 1 rojo: 1P fallado · 2 verde: 2P convertido · 2 rojo: 2P fallado · 3 verde: 3P convertido · 3 rojo: 3P fallado · ● Verde: entra · ● Rojo: sale")
                                 else:
                                     st.info('No se pudieron derivar intervalos de presencia del PBP (LOCAL).')
                         except Exception as e:
@@ -3223,6 +3311,15 @@ if (ejecutar or ('tablas' in st.session_state)):
                                     intervals_df['player'] = intervals_df['player'].astype(str)
                                     players_count = len(y_order_vis) if y_order_vis else intervals_df['player'].nunique()
                                     chart_height = max(380, 28 * players_count)
+                                    halo_vis = (
+                                        alt.Chart(intervals_df)
+                                        .mark_rule(color='#000000', strokeWidth=9, opacity=0.15)
+                                        .encode(
+                                            x=alt.X('x1:Q', title='Tiempo (x_period)'),
+                                            x2='x2:Q',
+                                            y=alt.Y('player:N', sort=y_order_vis if y_order_vis else None, title='Jugador (Visitante)', axis=alt.Axis(labelFontSize=13))
+                                        )
+                                    )
                                     base = (
                                         alt.Chart(intervals_df)
                                         .mark_rule(color=color_visitante, strokeWidth=6)
@@ -3241,7 +3338,7 @@ if (ejecutar or ('tablas' in st.session_state)):
                                         if prev is not None and cur != prev:
                                             period_changes.append({'x_period': rp.get('x_period'), 'numero_periodo': cur})
                                         prev = cur
-                                    chart_vis = base
+                                    chart_vis = halo_vis + base
                                     if period_changes:
                                         rules_df = pd.DataFrame(period_changes)
                                         rules = alt.Chart(rules_df).mark_rule(color='#333333', strokeDash=[8,4], strokeWidth=3).encode(
@@ -3274,7 +3371,49 @@ if (ejecutar or ('tablas' in st.session_state)):
                                                 .encode(x=alt.X('x_period:Q'), y=alt.Y('player:N', sort=y_order_vis if y_order_vis else None))
                                             )
                                             chart_vis = chart_vis + sale_layer
+                                    # Marcas de tiros (VISITANTE)
+                                    if 'accion_tipo' in dfp.columns and 'Condicion' in dfp.columns:
+                                        shots = dfp[(dfp['Condicion'].astype(str).str.upper()=='VISITANTE') & (dfp['accion_tipo'].isin([
+                                            'CANASTA-1P','TIRO1-FALLADO','CANASTA-2P','TIRO2-FALLADO','CANASTA-3P','TIRO3-FALLADO'
+                                        ]))].copy()
+                                        if not shots.empty:
+                                            shots['player'] = shots.get('nombre','').astype(str)
+                                            # Separación adicional en X para VISITANTE (igual que LOCAL)
+                                            try:
+                                                at = shots['accion_tipo'].astype(str)
+                                                tipo_num = at.str.extract(r'(\d)P', expand=False).fillna('0').astype(int)
+                                                is_made = at.str.startswith('CANASTA-')
+                                                base_off = np.where(is_made, 0.25, -0.25)
+                                                tipo_off = np.where(tipo_num == 1, 0.00, np.where(tipo_num == 2, 0.08, 0.16))
+                                                xper = pd.to_numeric(shots.get('x_period', 0), errors='coerce').fillna(0)
+                                                shots['__x_adj'] = xper + base_off + tipo_off
+                                            except Exception:
+                                                shots['__x_adj'] = shots.get('x_period', 0)
+                                            def shot_layer_text(df_in, color_hex, glyph, dx_px):
+                                                if df_in.empty:
+                                                    return None
+                                                return (
+                                                    alt.Chart(df_in)
+                                                    .mark_text(fontWeight='bold', fontSize=26, color=color_hex, stroke='black', strokeWidth=0.6, dx=dx_px)
+                                                    .encode(
+                                                        x=alt.X('__x_adj:Q'),
+                                                        y=alt.Y('player:N', sort=y_order_vis if y_order_vis else None),
+                                                        text=alt.value(glyph)
+                                                    )
+                                                )
+                                            grn = '#2e7d32'
+                                            red = '#c62828'
+                                            l_m1 = shot_layer_text(shots[shots['accion_tipo']=='CANASTA-1P'], grn, '1', 8)
+                                            l_x1 = shot_layer_text(shots[shots['accion_tipo']=='TIRO1-FALLADO'], red, '1', -8)
+                                            l_m2 = shot_layer_text(shots[shots['accion_tipo']=='CANASTA-2P'], grn, '2', 8)
+                                            l_x2 = shot_layer_text(shots[shots['accion_tipo']=='TIRO2-FALLADO'], red, '2', -8)
+                                            l_m3 = shot_layer_text(shots[shots['accion_tipo']=='CANASTA-3P'], grn, '3', 8)
+                                            l_x3 = shot_layer_text(shots[shots['accion_tipo']=='TIRO3-FALLADO'], red, '3', -8)
+                                            for lyr in [l_m1,l_x1,l_m2,l_x2,l_m3,l_x3]:
+                                                if lyr is not None:
+                                                    chart_vis = chart_vis + lyr
                                     st.altair_chart(chart_vis, use_container_width=True)
+                                    st.caption("1 verde: 1P convertido · 1 rojo: 1P fallado · 2 verde: 2P convertido · 2 rojo: 2P fallado · 3 verde: 3P convertido · 3 rojo: 3P fallado · ● Verde: entra · ● Rojo: sale")
                                 else:
                                     st.info('No se pudieron derivar intervalos de presencia del PBP (VISITANTE).')
                         except Exception as e:
