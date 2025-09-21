@@ -1016,9 +1016,14 @@ def descargar_y_transformar(partido_id: str) -> Dict[str, pd.DataFrame]:
             pbp_df['tiempo_segundos'] = pbp_df['tiempo_partido'].apply(to_seconds)
         # x_period = (600 - tiempo_segundos) + (numero_periodo - 1) * 600
         if 'numero_periodo' in pbp_df.columns:
-            tiempo_num = pd.to_numeric(pbp_df.get('tiempo_segundos', np.nan), errors='coerce')
+            tiempo_num = pd.to_numeric(pbp_df.get('tiempo_segundos', np.nan), errors='coerce').fillna(0)
             periodo_num = pd.to_numeric(pbp_df.get('numero_periodo', 1), errors='coerce').fillna(1)
-            pbp_df['x_period'] = (600 - tiempo_num.fillna(0)) + (periodo_num - 1) * 600
+            # Q1-Q4 (10 min) y OT (5 min)
+            pbp_df['x_period'] = np.where(
+                periodo_num <= 4,
+                (600 - tiempo_num) + (periodo_num - 1) * 600,
+                2400 + (300 - tiempo_num) + (periodo_num - 5) * 300
+            )
 
     return {
         'partido': partido_df,
@@ -1268,12 +1273,15 @@ if (ejecutar or ('tablas' in st.session_state)):
 
                     # Eje X: usar x_period de pbp si existe; sino calcular
                     if 'x_period' not in dfp.columns:
-                        # x_period = (600 - tiempo_segundos) + (numero_periodo - 1) * 600
+                        # x_period: Q1-Q4 (10 min) y OT (5 min). Si no hay tiempo, usar 'orden'.
                         tiempo_num = pd.to_numeric(dfp.get('tiempo_segundos', np.nan), errors='coerce')
                         periodo_num = pd.to_numeric(dfp.get('numero_periodo', 1), errors='coerce').fillna(1)
-                        # Si no hay tiempo_segundos, usar orden como aproximación
                         tiempo_num = tiempo_num.fillna(dfp['orden'])
-                        dfp['x_period'] = (600 - tiempo_num) + (periodo_num - 1) * 600
+                        dfp['x_period'] = np.where(
+                            periodo_num <= 4,
+                            (600 - tiempo_num) + (periodo_num - 1) * 600,
+                            2400 + (300 - tiempo_num) + (periodo_num - 5) * 300
+                        )
 
                     # Asegurar x_period numérico exacto del pbp
                     dfp['x_period'] = pd.to_numeric(dfp['x_period'], errors='coerce')
@@ -2521,6 +2529,7 @@ if (ejecutar or ('tablas' in st.session_state)):
                     st.dataframe(styled_loc, use_container_width=True, hide_index=True, column_config=build_column_config(tbl_loc))
                     # Leyenda solo para estrella
                     st.caption("⭐ Quinteto titular")
+                    # (Timeline LOCAL movido a pestaña Quintetos)
 
                     st.markdown(f"""
                         <div style='text-align:center;background:{color_visitante};color:{tc_visitante};padding:10px;border-radius:6px;margin:16px 0 8px;'>
@@ -2530,6 +2539,7 @@ if (ejecutar or ('tablas' in st.session_state)):
                     styled_vis = style_star(tbl_vis, color_visitante)
                     st.dataframe(styled_vis, use_container_width=True, hide_index=True, column_config=build_column_config(tbl_vis))
                     st.caption("⭐ Quinteto titular")
+                    # (Timeline VISITANTE movido a pestaña Quintetos)
                 else:
                     st.info('No hay jugadoresAgregado para generar estadística')
 
@@ -2976,6 +2986,151 @@ if (ejecutar or ('tablas' in st.session_state)):
                     if not tbl_loc_q.empty:
                         st.dataframe(tbl_loc_q, use_container_width=True, hide_index=True, column_config=build_column_config(tbl_loc_q))
                         st.caption("⭐ Quinteto inicial   ·   🟢↑ Mayor +/-   ·   🔴↓ Menor +/-")
+                        # Timeline de presencia (LOCAL)
+                        try:
+                            pbp_df_full = tablas.get('pbp', pd.DataFrame()).copy()
+                            if not pbp_df_full.empty and 'quinteto_local' in pbp_df_full.columns:
+                                dfp = pbp_df_full.copy()
+                                # Orden temporal consistente
+                                if 'autoincremental_id' in dfp.columns and 'autoincremental_id_num' not in dfp.columns:
+                                    dfp['autoincremental_id_num'] = pd.to_numeric(dfp['autoincremental_id'], errors='coerce').fillna(0)
+                                if 'autoincremental_id_num' in dfp.columns:
+                                    dfp = dfp.sort_values(by=['_id','numero_periodo','autoincremental_id_num'])
+                                elif 'tiempo_segundos' in dfp.columns:
+                                    dfp = dfp.sort_values(by=['_id','numero_periodo','tiempo_segundos'])
+                                dfp = dfp.reset_index(drop=True)
+                                # x_period con soporte de prórrogas (OT)
+                                if 'x_period' not in dfp.columns:
+                                    tnum = pd.to_numeric(dfp.get('tiempo_segundos', np.nan), errors='coerce').fillna(0)
+                                    pnum = pd.to_numeric(dfp.get('numero_periodo', 1), errors='coerce').fillna(1)
+                                    dfp['x_period'] = np.where(
+                                        pnum <= 4,
+                                        (600 - tnum) + (pnum - 1) * 600,
+                                        2400 + (300 - tnum) + (pnum - 4) * 300
+                                    )
+                                dfp['x_period'] = pd.to_numeric(dfp['x_period'], errors='coerce')
+                                dfp = dfp[~dfp['x_period'].isna()].copy()
+                                # Y-order desde planilla local
+                                est_loc_df2 = tablas.get('estadisticas_equipolocal', pd.DataFrame()).copy()
+                                y_order_loc: List[str] = []
+                                if not est_loc_df2.empty:
+                                    dcol = _first_col(est_loc_df2, ['dorsal','numero','nro','número','numero_camiseta','n_camisa'])
+                                    ncol = _first_col(est_loc_df2, ['nombre','jugador','nombre_jugador'])
+                                    if dcol and ncol:
+                                        tmp = est_loc_df2[[dcol, ncol]].copy()
+                                        def _fmt_label_loc(r):
+                                            try:
+                                                dd = int(pd.to_numeric(r.get(dcol, ''), errors='coerce'))
+                                                dd2 = f"{dd:02d}"
+                                            except Exception:
+                                                dd2 = str(r.get(dcol, '')).strip()
+                                            nm = str(r.get(ncol, '')).strip()
+                                            return (dd2 + '-' + nm).strip('-') if dd2 or nm else nm
+                                        y_order_loc = [_fmt_label_loc(r) for _, r in tmp.iterrows()]
+                                        seen = set()
+                                        y_order_loc = [x for x in y_order_loc if not (x in seen or seen.add(x))]
+                                # Normalizar quinteto_local en dfp
+                                def _to_list(v):
+                                    if isinstance(v, list):
+                                        return [str(x) for x in v]
+                                    if isinstance(v, str):
+                                        try:
+                                            parsed = json.loads(v)
+                                            if isinstance(parsed, list):
+                                                return [str(x) for x in parsed]
+                                        except Exception:
+                                            pass
+                                        parts = [p.strip() for p in re.split(r"\s*/\s*", v) if p.strip()]
+                                        return parts if parts else [v]
+                                    return []
+                                dfp['quinteto_local'] = dfp['quinteto_local'].apply(_to_list)
+                                # Intervalos [x1,x2] por jugador del quinteto previo
+                                intervals = []
+                                for i in range(1, len(dfp)):
+                                    r_prev = dfp.iloc[i-1]
+                                    r_cur = dfp.iloc[i]
+                                    try:
+                                        per_prev = int(pd.to_numeric(r_prev.get('numero_periodo'), errors='coerce'))
+                                        per_cur = int(pd.to_numeric(r_cur.get('numero_periodo'), errors='coerce'))
+                                    except Exception:
+                                        per_prev, per_cur = None, None
+                                    if per_prev is None or per_cur is None or per_prev != per_cur:
+                                        continue
+                                    x1 = float(pd.to_numeric(r_prev.get('x_period'), errors='coerce'))
+                                    x2 = float(pd.to_numeric(r_cur.get('x_period'), errors='coerce'))
+                                    if x2 < x1:
+                                        x1, x2 = x2, x1
+                                    for p in (r_prev.get('quinteto_local') or []):
+                                        intervals.append({'player': str(p), 'x1': x1, 'x2': x2})
+                                intervals_df = pd.DataFrame(intervals)
+                                # Eventos ENTRA/SALE (LOCAL) -> círculos verde/rojo
+                                ev = pd.DataFrame()
+                                if 'accion_tipo' in dfp.columns and 'Condicion' in dfp.columns:
+                                    ev = dfp[dfp['accion_tipo'].isin(['CAMBIO-JUGADOR-ENTRA','CAMBIO-JUGADOR-SALE']) & (dfp['Condicion'].astype(str).str.upper()=='LOCAL')].copy()
+                                    if not ev.empty:
+                                        ev['player'] = ev.get('nombre', '').astype(str)
+                                if not intervals_df.empty:
+                                    intervals_df['player'] = intervals_df['player'].astype(str)
+                                    # Alto suficiente: ~28px por jugador
+                                    players_count = len(y_order_loc) if y_order_loc else intervals_df['player'].nunique()
+                                    chart_height = max(380, 28 * players_count)
+                                    base = (
+                                        alt.Chart(intervals_df)
+                                        .mark_rule(color=color_local, strokeWidth=6)
+                                        .encode(
+                                            x=alt.X('x1:Q', title='Tiempo (x_period)'),
+                                            x2='x2:Q',
+                                            y=alt.Y('player:N', sort=y_order_loc if y_order_loc else None, title='Jugador (Local)', axis=alt.Axis(labelFontSize=13))
+                                        )
+                                        .properties(height=chart_height, title=alt.TitleParams(text=f'Jugadores en cancha - {local_title}', anchor='middle'))
+                                    )
+                                    # Reglas verticales y etiquetas de periodo
+                                    period_changes = []
+                                    prev = None
+                                    for _, rp in dfp.iterrows():
+                                        cur = rp.get('numero_periodo')
+                                        if prev is not None and cur != prev:
+                                            period_changes.append({'x_period': rp.get('x_period'), 'numero_periodo': cur})
+                                        prev = cur
+                                    chart_loc = base
+                                    if period_changes:
+                                        rules_df = pd.DataFrame(period_changes)
+                                        rules = alt.Chart(rules_df).mark_rule(color='#333333', strokeDash=[8,4], strokeWidth=3).encode(
+                                            x=alt.X('x_period:Q'),
+                                            tooltip=[alt.Tooltip('numero_periodo:N', title='Inicio periodo')]
+                                        )
+                                        # Etiqueta en la parte superior con texto "P <n>"
+                                        top_name = y_order_loc[0] if y_order_loc else intervals_df['player'].unique().tolist()[0]
+                                        labels_df = rules_df.copy()
+                                        labels_df['label'] = 'P ' + labels_df['numero_periodo'].astype(str)
+                                        labels_df['y_label'] = top_name
+                                        labels = alt.Chart(labels_df).mark_text(align='left', baseline='bottom', dx=6, dy=-8, color='#333333', fontSize=14).encode(
+                                            x=alt.X('x_period:Q'), y=alt.Y('y_label:N'), text='label:N'
+                                        )
+                                        chart_loc = chart_loc + rules + labels
+                                    # Marcas ENTRA (verde) / SALE (rojo) como círculos
+                                    if not ev.empty:
+                                        enter = ev[ev['accion_tipo']=='CAMBIO-JUGADOR-ENTRA'].copy()
+                                        sale = ev[ev['accion_tipo']=='CAMBIO-JUGADOR-SALE'].copy()
+                                        if not enter.empty:
+                                            enter_layer = (
+                                                alt.Chart(enter)
+                                                .mark_point(filled=True, size=140, color='#2e7d32', shape='circle')
+                                                .encode(x=alt.X('x_period:Q'), y=alt.Y('player:N', sort=y_order_loc if y_order_loc else None))
+                                            )
+                                            chart_loc = chart_loc + enter_layer
+                                        if not sale.empty:
+                                            sale_layer = (
+                                                alt.Chart(sale)
+                                                .mark_point(filled=True, size=140, color='#c62828', shape='circle')
+                                                .encode(x=alt.X('x_period:Q'), y=alt.Y('player:N', sort=y_order_loc if y_order_loc else None))
+                                            )
+                                            chart_loc = chart_loc + sale_layer
+                                    st.altair_chart(chart_loc, use_container_width=True)
+                                else:
+                                    st.info('No se pudieron derivar intervalos de presencia del PBP (LOCAL).')
+                        except Exception as e:
+                            st.warning(f'No se pudo generar el timeline LOCAL: {e}')
                     else:
                         st.info('Sin datos de quintetos LOCAL para los filtros seleccionados')
 
@@ -2987,23 +3142,150 @@ if (ejecutar or ('tablas' in st.session_state)):
                     if not tbl_vis_q.empty:
                         st.dataframe(tbl_vis_q, use_container_width=True, hide_index=True, column_config=build_column_config(tbl_vis_q))
                         st.caption("⭐ Quinteto inicial   ·   🟢↑ Mayor +/-   ·   🔴↓ Menor +/-")
+                        # Timeline de presencia (VISITANTE)
+                        try:
+                            pbp_df_full = tablas.get('pbp', pd.DataFrame()).copy()
+                            if not pbp_df_full.empty and 'quinteto_visitante' in pbp_df_full.columns:
+                                dfp = pbp_df_full.copy()
+                                if 'autoincremental_id' in dfp.columns and 'autoincremental_id_num' not in dfp.columns:
+                                    dfp['autoincremental_id_num'] = pd.to_numeric(dfp['autoincremental_id'], errors='coerce').fillna(0)
+                                if 'autoincremental_id_num' in dfp.columns:
+                                    dfp = dfp.sort_values(by=['_id','numero_periodo','autoincremental_id_num'])
+                                elif 'tiempo_segundos' in dfp.columns:
+                                    dfp = dfp.sort_values(by=['_id','numero_periodo','tiempo_segundos'])
+                                dfp = dfp.reset_index(drop=True)
+                                if 'x_period' not in dfp.columns:
+                                    tnum = pd.to_numeric(dfp.get('tiempo_segundos', np.nan), errors='coerce').fillna(0)
+                                    pnum = pd.to_numeric(dfp.get('numero_periodo', 1), errors='coerce').fillna(1)
+                                    dfp['x_period'] = (600 - tnum) + (pnum - 1) * 600
+                                dfp['x_period'] = pd.to_numeric(dfp['x_period'], errors='coerce')
+                                dfp = dfp[~dfp['x_period'].isna()].copy()
+                                # Y-order desde planilla visitante
+                                est_vis_df2 = tablas.get('estadisticas_equipovisitante', pd.DataFrame()).copy()
+                                y_order_vis: List[str] = []
+                                if not est_vis_df2.empty:
+                                    dcol = _first_col(est_vis_df2, ['dorsal','numero','nro','número','numero_camiseta','n_camisa'])
+                                    ncol = _first_col(est_vis_df2, ['nombre','jugador','nombre_jugador'])
+                                    if dcol and ncol:
+                                        tmp = est_vis_df2[[dcol, ncol]].copy()
+                                        def _fmt_label_vis(r):
+                                            try:
+                                                dd = int(pd.to_numeric(r.get(dcol, ''), errors='coerce'))
+                                                dd2 = f"{dd:02d}"
+                                            except Exception:
+                                                dd2 = str(r.get(dcol, '')).strip()
+                                            nm = str(r.get(ncol, '')).strip()
+                                            return (dd2 + '-' + nm).strip('-') if dd2 or nm else nm
+                                        y_order_vis = [_fmt_label_vis(r) for _, r in tmp.iterrows()]
+                                        seen = set()
+                                        y_order_vis = [x for x in y_order_vis if not (x in seen or seen.add(x))]
+                                # Normalizar quinteto_visitante
+                                def _to_list2(v):
+                                    if isinstance(v, list):
+                                        return [str(x) for x in v]
+                                    if isinstance(v, str):
+                                        try:
+                                            parsed = json.loads(v)
+                                            if isinstance(parsed, list):
+                                                return [str(x) for x in parsed]
+                                        except Exception:
+                                            pass
+                                        parts = [p.strip() for p in re.split(r"\s*/\s*", v) if p.strip()]
+                                        return parts if parts else [v]
+                                    return []
+                                dfp['quinteto_visitante'] = dfp['quinteto_visitante'].apply(_to_list2)
+                                # Intervalos
+                                intervals = []
+                                for i in range(1, len(dfp)):
+                                    r_prev = dfp.iloc[i-1]
+                                    r_cur = dfp.iloc[i]
+                                    try:
+                                        per_prev = int(pd.to_numeric(r_prev.get('numero_periodo'), errors='coerce'))
+                                        per_cur = int(pd.to_numeric(r_cur.get('numero_periodo'), errors='coerce'))
+                                    except Exception:
+                                        per_prev, per_cur = None, None
+                                    if per_prev is None or per_cur is None or per_prev != per_cur:
+                                        continue
+                                    x1 = float(pd.to_numeric(r_prev.get('x_period'), errors='coerce'))
+                                    x2 = float(pd.to_numeric(r_cur.get('x_period'), errors='coerce'))
+                                    if x2 < x1:
+                                        x1, x2 = x2, x1
+                                    for p in (r_prev.get('quinteto_visitante') or []):
+                                        intervals.append({'player': str(p), 'x1': x1, 'x2': x2})
+                                intervals_df = pd.DataFrame(intervals)
+                                # Eventos ENTRA/SALE (VISITANTE)
+                                ev = pd.DataFrame()
+                                if 'accion_tipo' in dfp.columns and 'Condicion' in dfp.columns:
+                                    ev = dfp[dfp['accion_tipo'].isin(['CAMBIO-JUGADOR-ENTRA','CAMBIO-JUGADOR-SALE']) & (dfp['Condicion'].astype(str).str.upper()=='VISITANTE')].copy()
+                                    if not ev.empty:
+                                        ev['player'] = ev.get('nombre', '').astype(str)
+                                if not intervals_df.empty:
+                                    intervals_df['player'] = intervals_df['player'].astype(str)
+                                    players_count = len(y_order_vis) if y_order_vis else intervals_df['player'].nunique()
+                                    chart_height = max(380, 28 * players_count)
+                                    base = (
+                                        alt.Chart(intervals_df)
+                                        .mark_rule(color=color_visitante, strokeWidth=6)
+                                        .encode(
+                                            x=alt.X('x1:Q', title='Tiempo (x_period)'),
+                                            x2='x2:Q',
+                                            y=alt.Y('player:N', sort=y_order_vis if y_order_vis else None, title='Jugador (Visitante)', axis=alt.Axis(labelFontSize=13))
+                                        )
+                                        .properties(height=chart_height, title=alt.TitleParams(text=f'Jugadores en cancha - {visitante_title}', anchor='middle'))
+                                    )
+                                    # Reglas verticales y etiquetas de periodo
+                                    period_changes = []
+                                    prev = None
+                                    for _, rp in dfp.iterrows():
+                                        cur = rp.get('numero_periodo')
+                                        if prev is not None and cur != prev:
+                                            period_changes.append({'x_period': rp.get('x_period'), 'numero_periodo': cur})
+                                        prev = cur
+                                    chart_vis = base
+                                    if period_changes:
+                                        rules_df = pd.DataFrame(period_changes)
+                                        rules = alt.Chart(rules_df).mark_rule(color='#333333', strokeDash=[8,4], strokeWidth=3).encode(
+                                            x=alt.X('x_period:Q'),
+                                            tooltip=[alt.Tooltip('numero_periodo:N', title='Inicio periodo')]
+                                        )
+                                        top_name = y_order_vis[0] if y_order_vis else intervals_df['player'].unique().tolist()[0]
+                                        labels_df = rules_df.copy()
+                                        labels_df['label'] = 'P ' + labels_df['numero_periodo'].astype(str)
+                                        labels_df['y_label'] = top_name
+                                        labels = alt.Chart(labels_df).mark_text(align='left', baseline='bottom', dx=6, dy=-8, color='#333333', fontSize=14).encode(
+                                            x=alt.X('x_period:Q'), y=alt.Y('y_label:N'), text='label:N'
+                                        )
+                                        chart_vis = chart_vis + rules + labels
+                                    # Marcas ENTRA/SALE
+                                    if not ev.empty:
+                                        enter = ev[ev['accion_tipo']=='CAMBIO-JUGADOR-ENTRA'].copy()
+                                        sale = ev[ev['accion_tipo']=='CAMBIO-JUGADOR-SALE'].copy()
+                                        if not enter.empty:
+                                            enter_layer = (
+                                                alt.Chart(enter)
+                                                .mark_point(filled=True, size=140, color='#2e7d32', shape='circle')
+                                                .encode(x=alt.X('x_period:Q'), y=alt.Y('player:N', sort=y_order_vis if y_order_vis else None))
+                                            )
+                                            chart_vis = chart_vis + enter_layer
+                                        if not sale.empty:
+                                            sale_layer = (
+                                                alt.Chart(sale)
+                                                .mark_point(filled=True, size=140, color='#c62828', shape='circle')
+                                                .encode(x=alt.X('x_period:Q'), y=alt.Y('player:N', sort=y_order_vis if y_order_vis else None))
+                                            )
+                                            chart_vis = chart_vis + sale_layer
+                                    st.altair_chart(chart_vis, use_container_width=True)
+                                else:
+                                    st.info('No se pudieron derivar intervalos de presencia del PBP (VISITANTE).')
+                        except Exception as e:
+                            st.warning(f'No se pudo generar el timeline VISITANTE: {e}')
                     else:
                         st.info('Sin datos de quintetos VISITANTE para los filtros seleccionados')
                 else:
                     st.info('No hay datos de quintetos para mostrar')
 
 
-            # Pestaña auxiliar: Planillas Local/Visitante con columna DD_NOMBRE
-            # with t_aux_planillas:
-            #     st.subheader('Planillas (auxiliar)')
-            #     plan_loc = tablas.get('estadisticas_equipolocal', pd.DataFrame()).copy()
-            #     plan_vis = tablas.get('estadisticas_equipovisitante', pd.DataFrame()).copy()
-
-            #     def _first_col2(df: pd.DataFrame, cands: list[str]) -> str:
-            #         for c in cands:
-            #             if c in df.columns:
-            #                 return c
-            #         return ''
+            # (Se elimina la pestaña Aux; el timeline fue integrado arriba en Quintetos)
 
             #     def two_digit(v: Any) -> str:
             #         try:
