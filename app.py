@@ -320,6 +320,14 @@ def build_column_config(df_show: pd.DataFrame):
     for col in df_show.columns:
         if col == 'Nombre':
             cfg[col] = st.column_config.TextColumn(width=220)
+        elif col == 'Quinteto':
+            cfg[col] = st.column_config.TextColumn(width=480)
+        elif col == 'Titular':
+            # Sin título y bien estrecha para mostrar solo la estrella
+            cfg[col] = st.column_config.TextColumn(label="", width=40)
+        elif col == 'Marca':
+            # Columna de símbolos (quintetos): sin título y angosta
+            cfg[col] = st.column_config.TextColumn(label="", width=40)
         else:
             cfg[col] = st.column_config.TextColumn(width=80)
     return cfg
@@ -1071,30 +1079,42 @@ if (ejecutar or ('tablas' in st.session_state)):
             st.error("Ingrese un ID numérico válido.")
         else:
             try:
+                # Resetear filtros de las 3 pestañas al buscar un nuevo partido
+                for k in ['res_sel_per','estad_sel_per','estad_sel_situ','estad_sel_u2m','q_sel_per','q_sel_situ','q_sel_u2m']:
+                    try:
+                        if k in st.session_state:
+                            del st.session_state[k]
+                    except Exception:
+                        pass
                 with st.spinner("Descargando y procesando datos..."):
                     tablas = descargar_y_transformar(partido_id_input.strip())
                 # Persistir en sesión para evitar re-descarga al cambiar filtros
                 st.session_state['tablas'] = tablas
+                # Forzar reinicio visual de filtros a 'TODOS'
+                st.session_state['res_sel_per'] = 'TODOS'
+                st.session_state['estad_sel_per'] = 'TODOS'
+                st.session_state['estad_sel_situ'] = 'TODOS'
+                st.session_state['estad_sel_u2m'] = 'TODOS'
+                st.session_state['q_sel_per'] = 'TODOS'
+                st.session_state['q_sel_situ'] = 'TODOS'
+                st.session_state['q_sel_u2m'] = 'TODOS'
             except Exception as e:
                 # Mostrar error y detalle para diagnóstico
                 st.error("ID de Partido no encontrado")
-                st.caption("Detalle del error (para diagnóstico):")
-                st.exception(e)
                 tablas = None
     else:
         tablas = st.session_state.get('tablas')
 
     if tablas is not None:
         # Mantener orden fijo pero mostrando primero 'Resumen' al abrir la app
-        # Pestañas: Resumen, Estadisticas por jugador, Estadistica por Quintetos, quintetosAgregado
-        nombres = ["Resumen", "Estadisticas por jugador", "Estadistica por Quintetos", "quintetosAgregado"]
+        # Pestañas: Resumen, Estadisticas por jugador, Estadistica por Quintetos
+        nombres = ["Resumen", "Estadisticas por jugador", "Estadistica por Quintetos"]
         # Mostrar pestañas
         tabs = st.tabs(nombres)
         # Referencias por nombre
         t_resumen = tabs[0]
         t_estadistica = tabs[1]
         t_quintetos = tabs[2]
-        t_quintetos_raw = tabs[3]
 
         # Pestaña Resumen
         with t_resumen:
@@ -1222,7 +1242,7 @@ if (ejecutar or ('tablas' in st.session_state)):
                     except Exception:
                         periodos = []
                     opciones_periodo = ['TODOS'] + periodos
-                    sel_periodo = st.selectbox('Seleccionar periodo', opciones_periodo, index=0)
+                    sel_periodo = st.selectbox('Seleccionar periodo', opciones_periodo, index=0, key='res_sel_per')
                     # Espaciado
                     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
                     chart_height = 600
@@ -1264,9 +1284,16 @@ if (ejecutar or ('tablas' in st.session_state)):
                     dfp['puntosLocal_num'] = pd.to_numeric(dfp.get('puntosLocal', 0), errors='coerce').fillna(0)
                     dfp['puntosVisitante_num'] = pd.to_numeric(dfp.get('puntosVisitante', 0), errors='coerce').fillna(0)
 
+                    # Ajustar color de línea si el color de equipo es blanco para que se vea
+                    def _is_white(c: str) -> bool:
+                        s = str(c).strip().lower()
+                        return s in ('#fff', '#ffffff', 'white')
+                    local_line_color = '#cfd8dc' if _is_white(color_local) else color_local
+                    visit_line_color = '#cfd8dc' if _is_white(color_visitante) else color_visitante
+
                     line_local = (
                         alt.Chart(dfp)
-                        .mark_line(point=False, color=color_local)
+                        .mark_line(point=False, color=local_line_color)
                         .encode(
                             x=alt.X('x_period:Q', title='Tiempo', sort=None),
                             y=alt.Y('puntosLocal_num:Q', title='Puntos acumulados'),
@@ -1282,7 +1309,7 @@ if (ejecutar or ('tablas' in st.session_state)):
                     )
                     line_visit = (
                         alt.Chart(dfp)
-                        .mark_line(point=False, color=color_visitante)
+                        .mark_line(point=False, color=visit_line_color)
                         .encode(
                             x=alt.X('x_period:Q', title='Tiempo', sort=None),
                             y=alt.Y('puntosVisitante_num:Q', title='Puntos acumulados'),
@@ -1415,8 +1442,12 @@ if (ejecutar or ('tablas' in st.session_state)):
                             .properties(height=chart_height, title=alt.TitleParams(text='Diferencia de puntos (local - visitante)', anchor='middle'))
                             .transform_filter(brush)
                         )
-                        # Línea horizontal en 0
-                        zero_rule = alt.Chart(pd.DataFrame({'y':[0]})).mark_rule(color='#aaaaaa').encode(y='y:Q')
+                        # Línea horizontal en 0 (más oscura y punteada)
+                        zero_rule = (
+                            alt.Chart(pd.DataFrame({'y':[0]}))
+                            .mark_rule(color='#333333', strokeDash=[6,3], strokeWidth=2)
+                            .encode(y='y:Q')
+                        )
 
                         # Reglas y etiquetas de cambio de periodo igual que en el primer gráfico
                         diff_chart = diff_line + zero_rule
@@ -1513,9 +1544,8 @@ if (ejecutar or ('tablas' in st.session_state)):
                             pass
 
                         diff_chart = diff_chart.add_params(brush)
-                        # Guardar para renderizar en columnas
+                        # Mostrar ambos gráficos en la misma línea (layout original)
                         diff_chart_full = diff_chart
-                        # Mostrar ambos gráficos en la misma línea
                         col_a, col_b = st.columns(2)
                         with col_a:
                             st.altair_chart(chart_full, use_container_width=True)
@@ -1838,16 +1868,94 @@ if (ejecutar or ('tablas' in st.session_state)):
 
                                     # Tarjetas con color de equipo
                                     card_style = "border-radius:10px;padding:12px 14px;margin:6px 0;box-shadow:0 1px 5px rgba(0,0,0,.08)"
+                                    # Calcular puntos titulares/suplentes por equipo cruzando PBP con planillas (respetando filtro de periodo ya aplicado a dfp)
+                                    try:
+                                        pbp_pts = dfp.copy()
+                                        # Columnas candidatas
+                                        dorsal_candidates = ['dorsal','numero','nro','número','numero_camiseta','n_camisa']
+                                        pbp_dorsal_col = _first_col(pbp_pts, dorsal_candidates)
+                                        if pbp_dorsal_col is None or pbp_dorsal_col not in pbp_pts.columns:
+                                            raise ValueError('PBP sin columna de dorsal reconocible')
+                                        # Normalizar Condicion
+                                        if 'Condicion' in pbp_pts.columns:
+                                            pbp_pts['Condicion'] = pbp_pts['Condicion'].astype(str).str.upper().fillna('')
+                                        else:
+                                            pbp_pts['Condicion'] = ''
+                                        # Mapear puntos por tipo de canasta
+                                        at = pbp_pts.get('accion_tipo', '').astype(str).str.upper()
+                                        pts_event = np.where(at == 'CANASTA-1P', 1,
+                                                      np.where(at == 'CANASTA-2P', 2,
+                                                      np.where(at == 'CANASTA-3P', 3, 0)))
+                                        pbp_pts['__puntos'] = pts_event
+                                        # Agregar por Condicion y dorsal
+                                        jg_grp = (
+                                            pbp_pts.groupby(['Condicion', pbp_dorsal_col], as_index=False)['__puntos']
+                                            .sum()
+                                            .rename(columns={pbp_dorsal_col: '__dorsal'})
+                                        )
+                                    except Exception:
+                                        jg_grp = pd.DataFrame(columns=['Condicion','__dorsal','__puntos'])
+
+                                    # Obtener planillas por equipo y detectar titularidad y dorsal
+                                    def titular_sets(planilla_df: pd.DataFrame):
+                                        if planilla_df is None or planilla_df.empty:
+                                            return set(), set()
+                                        dcol = _first_col(planilla_df, ['dorsal','numero','nro','número','numero_camiseta','n_camisa'])
+                                        tcol = _first_col(planilla_df, ['quintetotitular','quinteto_titular','QuintetoTitular','quintetoTitular','titular','es_titular'])
+                                        if not dcol or dcol not in planilla_df.columns or not tcol or tcol not in planilla_df.columns:
+                                            return set(), set()
+                                        dfp2 = planilla_df[[dcol, tcol]].copy()
+                                        def is_true(v):
+                                            try:
+                                                if isinstance(v, (int, float)):
+                                                    return float(v) != 0.0
+                                                s = str(v).strip().lower()
+                                                return s in ('si','sí','true','t','1','x','s')
+                                            except Exception:
+                                                return False
+                                        dfp2['__titular'] = dfp2[tcol].apply(is_true)
+                                        tit = set(pd.to_numeric(dfp2.loc[dfp2['__titular'], dcol], errors='coerce').dropna().astype(int).tolist())
+                                        supl = set(pd.to_numeric(dfp2.loc[~dfp2['__titular'], dcol], errors='coerce').dropna().astype(int).tolist())
+                                        return tit, supl
+
+                                    tit_loc, supl_loc = titular_sets(est_loc_df)
+                                    tit_vis, supl_vis = titular_sets(est_vis_df)
+
+                                    # Función para sumar puntos por conjunto de dorsales
+                                    def sum_pts(cond: str, dorsales: set) -> float:
+                                        if jg_grp is None or jg_grp.empty or not dorsales:
+                                            return 0.0
+                                        tmp = jg_grp[jg_grp['Condicion'].astype(str).str.upper()==cond.upper()].copy()
+                                        if tmp.empty:
+                                            return 0.0
+                                        tmp['__d'] = pd.to_numeric(tmp['__dorsal'], errors='coerce').astype('Int64')
+                                        s = tmp[tmp['__d'].isin(list(dorsales))]['__puntos'].sum()
+                                        try:
+                                            return float(s)
+                                        except Exception:
+                                            return 0.0
+
+                                    # Calcular puntos por equipo
+                                    pts_tit_loc = sum_pts('LOCAL', tit_loc)
+                                    pts_sup_loc = sum_pts('LOCAL', supl_loc)
+                                    pts_tit_vis = sum_pts('VISITANTE', tit_vis)
+                                    pts_sup_vis = sum_pts('VISITANTE', supl_vis)
+
+                                    # Tarjetas (posición original), con contenido reordenado
                                     st.markdown(
                                         f"""
                                         <div style='{card_style};background:{color_local};color:{tc_local};'>
                                             <div style='font-weight:700;margin-bottom:6px;'>{local_name}</div>
-                                            <div>Mejor racha: <strong>{best_L_pts}-0</strong> {fmt_when(sL, eL) if sL is not None else ''}</div>
+                                            <div>Puntos titulares: <strong>{int(pts_tit_loc)}</strong></div>
+                                            <div>Puntos suplentes: <strong>{int(pts_sup_loc)}</strong></div>
+                                            <div>Mejor racha: <strong>{best_L_pts}-0</strong> ({fmt_when(sL, eL) if sL is not None else ''})</div>
                                             <div>Mayor sequía: <strong>{fmt_drought_tuple(drought_best_L)}</strong></div>
                                         </div>
                                         <div style='{card_style};background:{color_visitante};color:{tc_visitante};'>
                                             <div style='font-weight:700;margin-bottom:6px;'>{visitante_name}</div>
-                                            <div>Mejor racha: <strong>{best_V_pts}-0</strong> {fmt_when(sV, eV) if sV is not None else ''}</div>
+                                            <div>Puntos titulares: <strong>{int(pts_tit_vis)}</strong></div>
+                                            <div>Puntos suplentes: <strong>{int(pts_sup_vis)}</strong></div>
+                                            <div>Mejor racha: <strong>{best_V_pts}-0</strong> ({fmt_when(sV, eV) if sV is not None else ''})</div>
                                             <div>Mayor sequía: <strong>{fmt_drought_tuple(drought_best_V)}</strong></div>
                                         </div>
                                         """,
@@ -1981,7 +2089,7 @@ if (ejecutar or ('tablas' in st.session_state)):
                             # Barras
                             bars = (
                                 alt.Chart(dfc)
-                                .mark_bar()
+                                .mark_bar(stroke='#000000', strokeWidth=1)
                                 .encode(
                                     x=alt.X('Equipo:N', title=None, sort=[local_name, visitante_name], axis=alt.Axis(labelAngle=315)),
                                     y=enc_y,
@@ -2087,6 +2195,30 @@ if (ejecutar or ('tablas' in st.session_state)):
                 local_title = str(part_df.iloc[0].get('local')) if not part_df.empty else 'Local'
                 visitante_title = str(part_df.iloc[0].get('visitante')) if not part_df.empty else 'Visitante'
                 jg = tablas.get('jugadoresAgregado', pd.DataFrame()).copy()
+                # Planillas por equipo para detectar titulares
+                plan_loc = tablas.get('estadisticas_equipolocal', pd.DataFrame()).copy()
+                plan_vis = tablas.get('estadisticas_equipovisitante', pd.DataFrame()).copy()
+                def titular_sets(planilla_df: pd.DataFrame):
+                    if planilla_df is None or planilla_df.empty:
+                        return set()
+                    dcol = _first_col(planilla_df, ['dorsal','numero','nro','número','numero_camiseta','n_camisa'])
+                    tcol = _first_col(planilla_df, ['quintetotitular','quinteto_titular','QuintetoTitular','quintetoTitular','titular','es_titular'])
+                    if not dcol or dcol not in planilla_df.columns or not tcol or tcol not in planilla_df.columns:
+                        return set()
+                    dfp2 = planilla_df[[dcol, tcol]].copy()
+                    def is_true(v):
+                        try:
+                            if isinstance(v, (int, float)):
+                                return float(v) != 0.0
+                            s = str(v).strip().lower()
+                            return s in ('si','sí','true','t','1','x','s')
+                        except Exception:
+                            return False
+                    dfp2['__titular'] = dfp2[tcol].apply(is_true)
+                    tit = set(pd.to_numeric(dfp2.loc[dfp2['__titular'], dcol], errors='coerce').dropna().astype(int).tolist())
+                    return tit
+                tit_set_loc = titular_sets(plan_loc)
+                tit_set_vis = titular_sets(plan_vis)
                 if not jg.empty:
                     # Ya no necesitamos arreglar nombres "NOMBRE" aquí, ya están formateados correctamente
                     # en la generación de jugadoresAgregado
@@ -2100,49 +2232,156 @@ if (ejecutar or ('tablas' in st.session_state)):
                     situ_col = _first_col(jg, ['SituacionMarcador', 'Situacion marcador', 'situacion_marcador', 'situacionMarcador', 'situacion', 'Situacion'])
                     u2m_col = _first_col(jg, ['ultimos_dos_minutos', 'ultimos2min', 'ultimos_dos', 'u2m'])
 
-                    with st.form(key='estadistica_filters'):
-                        fcols = st.columns(3)
-                        with fcols[0]:
+                    # Filtros en formulario para evitar cambio de pestaña al aplicar
+                    st.markdown("### Filtros")
+                    with st.form(key='estadisticas_filters'):
+                        cols_f = st.columns(3)
+                        with cols_f[0]:
                             if period_col and period_col in jg.columns:
                                 per_opts = ['TODOS'] + sorted(pd.to_numeric(jg[period_col], errors='coerce').dropna().astype(int).unique().tolist())
-                                sel_per = st.selectbox('Número de periodo', per_opts, index=0, key='estad_sel_per')
+                                sel_per = st.selectbox('Periodo', per_opts, index=0, key='estad_sel_per')
                             else:
                                 sel_per = 'TODOS'
-                        with fcols[1]:
+                        with cols_f[1]:
                             if situ_col and situ_col in jg.columns:
                                 situ_vals = jg[situ_col].astype(str).fillna('').unique().tolist()
                                 situ_opts = ['TODOS'] + sorted([s for s in situ_vals if s != ''])
-                                sel_situ = st.selectbox('Situacion marcador', situ_opts, index=0, key='estad_sel_situ')
+                                sel_situ = st.selectbox('Situacion', situ_opts, index=0, key='estad_sel_situ')
                             else:
                                 sel_situ = 'TODOS'
-                        with fcols[2]:
+                        with cols_f[2]:
                             if u2m_col and u2m_col in jg.columns:
-                                u2_vals = jg[u2m_col].astype(str).fillna('').unique().tolist()
-                                u2_opts = ['TODOS'] + sorted([u for u in u2_vals if u != ''])
-                                sel_u2m = st.selectbox('Momento del periodo', u2_opts, index=0, key='estad_sel_u2m')
+                                u2m_vals = jg[u2m_col].astype(str).fillna('').unique().tolist()
+                                u2m_opts = ['TODOS'] + sorted([s for s in u2m_vals if s != ''])
+                                sel_u2m = st.selectbox('Últimos 2 min', u2m_opts, index=0, key='estad_sel_u2m')
                             else:
                                 sel_u2m = 'TODOS'
-                        submitted = st.form_submit_button('Aplicar filtros')
-                        if submitted:
-                            _stay_estadistica()
+                        apply_filters = st.form_submit_button('Aplicar filtros')
 
-                    # Aplicar filtros
                     jg_f = jg.copy()
-                    if sel_per != 'TODOS' and period_col and period_col in jg_f.columns:
-                        try:
-                            jg_f = jg_f[pd.to_numeric(jg_f[period_col], errors='coerce') == int(sel_per)]
-                        except Exception:
-                            pass
-                    if sel_situ != 'TODOS' and situ_col and situ_col in jg_f.columns:
-                        jg_f = jg_f[jg_f[situ_col].astype(str) == str(sel_situ)]
-                    if sel_u2m != 'TODOS' and u2m_col and u2m_col in jg_f.columns:
-                        jg_f = jg_f[jg_f[u2m_col].astype(str) == str(sel_u2m)]
+                    if apply_filters:
+                        if sel_per != 'TODOS' and period_col and period_col in jg_f.columns:
+                            try:
+                                jg_f = jg_f[pd.to_numeric(jg_f[period_col], errors='coerce') == int(sel_per)]
+                            except Exception:
+                                pass
+                        if sel_situ != 'TODOS' and situ_col and situ_col in jg_f.columns:
+                            jg_f = jg_f[jg_f[situ_col].astype(str) == str(sel_situ)]
+                        if sel_u2m != 'TODOS' and u2m_col and u2m_col in jg_f.columns:
+                            jg_f = jg_f[jg_f[u2m_col].astype(str) == str(sel_u2m)]
+
+                    # Top-5 jugadores por minutos en últimos 2 min (Q4+) usando quintetosAgregado
+                    def compute_top5_u2m_names(cond: str, u2m_enabled: bool) -> set:
+                        if not u2m_enabled:
+                            return set()
+                        qg_all = tablas.get('quintetosAgregado', pd.DataFrame()).copy()
+                        if qg_all is None or qg_all.empty:
+                            return set()
+                        qg_all['Condicion'] = qg_all.get('Condicion','').astype(str).str.upper().fillna('')
+                        base = qg_all[qg_all['Condicion']==cond.upper()].copy()
+                        if base.empty:
+                            return set()
+                        # Normalizar columnas
+                        per_col = _first_col(base, ['numero_periodo','periodo','Periodo']) or 'numero_periodo'
+                        u2m_col = _first_col(base, ['ultimos_dos_minutos','ultimos2min','ultimos_dos','u2m','Ultimos 2 min','Últimos dos min']) or 'ultimos_dos_minutos'
+                        base['__per'] = pd.to_numeric(base.get(per_col, 0), errors='coerce').fillna(0)
+                        def _norm_txt(x: Any) -> str:
+                            s = str(x)
+                            s = s.replace('Ú','U').replace('ú','u').replace('ó','o').replace('í','i').replace('á','a').replace('é','e')
+                            return s.strip().lower()
+                        base['__u2m'] = base.get(u2m_col, '').apply(_norm_txt).isin(['ultimos dos min','u2m','true','1','si','sí','s'])
+                        # Parse tiempo_jugado en formato mm:ss a segundos
+                        def parse_secs(v: Any) -> float:
+                            try:
+                                s = str(v)
+                                if ':' in s:
+                                    mm, ss = s.split(':', 1)
+                                    return float(int(mm) * 60 + int(ss))
+                                return float(pd.to_numeric(v, errors='coerce'))
+                            except Exception:
+                                return 0.0
+                        base['__t'] = base.get('tiempo_jugado', 0).apply(parse_secs)
+                        filt = base[(base['__per']>=4) & (base['__u2m'])]
+                        if filt.empty:
+                            return set()
+                        # Acumular minutos por jugador a partir del quinteto
+                        acc = {}
+                        for _, r in filt.iterrows():
+                            t = float(r['__t'])
+                            q = r.get('quinteto')
+                            members = []
+                            if isinstance(q, (list, tuple)):
+                                members = [str(x).strip() for x in q]
+                            else:
+                                members = [s.strip() for s in re.split(r"\s*/\s*", str(q)) if s.strip()]
+                            for m in members:
+                                acc[m] = acc.get(m, 0.0) + t
+                        # Top-5 por tiempo
+                        top5 = sorted(acc.items(), key=lambda x: x[1], reverse=True)[:5]
+                        return set([str(k) for k,_ in top5])
+
+                    # Usar el filtro de Quintetos para decidir si marcamos 🔥
+                    def _norm_txt2(x: Any) -> str:
+                        s = str(x)
+                        return s.replace('Ú','U').replace('ú','u').replace('ó','o').replace('í','i').replace('á','a').replace('é','e').strip().lower()
+                    u2m_enabled_flag = False
+                    try:
+                        u2m_enabled_flag = (_norm_txt2(st.session_state.get('q_sel_u2m', '')) == 'ultimos dos min') or (_norm_txt2(locals().get('sel_u2m_q', '')) == 'ultimos dos min')
+                    except Exception:
+                        u2m_enabled_flag = False
+                    top5_u2m_loc = compute_top5_u2m_names('LOCAL', u2m_enabled_flag)
+                    top5_u2m_vis = compute_top5_u2m_names('VISITANTE', u2m_enabled_flag)
 
                     def make_table(df_src: pd.DataFrame, condicion: str) -> pd.DataFrame:
                         df_t = df_src[df_src.get('Condicion', '').astype(str).str.upper() == condicion.upper()].copy()
                         if df_t.empty:
                             return pd.DataFrame()
                         name_col = _first_col(df_t, ['nombre', 'jugador', 'nombre_jugador']) or 'nombre'
+                        # Formatear el nombre que se mostrará en la tabla como "DD-Nombre" si hay dorsal (sin espacios)
+                        dorsal_candidates = ['dorsal','numero','nro','número','numero_camiseta','n_camisa']
+                        dcol = _first_col(df_t, dorsal_candidates)
+                        def two_digit(v: Any) -> str:
+                            try:
+                                iv = int(pd.to_numeric(v, errors='coerce'))
+                                return f"{iv:02d}"
+                            except Exception:
+                                return ''
+                        def fmt_name_row(r: pd.Series) -> str:
+                            nm = str(r.get(name_col, '')).strip()
+                            if dcol and dcol in r.index:
+                                dd = two_digit(r.get(dcol))
+                                return f"{dd}-{nm}" if dd else nm
+                            return nm
+                        df_t[name_col] = df_t.apply(fmt_name_row, axis=1)
+
+                        # Armar set de nombres titulares desde la planilla con el mismo formato "DD-Nombre" (sin espacios)
+                        plan_df = plan_loc if condicion.upper()=='LOCAL' else plan_vis
+                        tit_name_set = set()
+                        try:
+                            if plan_df is not None and not plan_df.empty:
+                                plan_dcol = _first_col(plan_df, dorsal_candidates)
+                                name_cands = ['Nombre','nombre','Jugador','jugador','nombre_jugador','NombreJugador']
+                                plan_name_col = _first_col(plan_df, name_cands)
+                                tit_cands = ['quintetotitular','quinteto_titular','QuintetoTitular','quintetoTitular','titular','es_titular']
+                                plan_tit_col = _first_col(plan_df, tit_cands)
+                                if plan_dcol and plan_name_col and plan_tit_col and \
+                                   plan_dcol in plan_df.columns and plan_name_col in plan_df.columns and plan_tit_col in plan_df.columns:
+                                    tmp = plan_df[[plan_dcol, plan_name_col, plan_tit_col]].copy()
+                                    def truthy(v: Any) -> bool:
+                                        try:
+                                            if isinstance(v, (int, float)):
+                                                return float(v) != 0.0
+                                            s = str(v).strip().lower()
+                                            return s in ('si','sí','true','t','1','x','s')
+                                        except Exception:
+                                            return False
+                                    tmp['__tit'] = tmp[plan_tit_col].apply(truthy)
+                                    tmp['__dd'] = tmp[plan_dcol].apply(two_digit)
+                                    tmp['__nn'] = tmp[plan_name_col].astype(str).str.strip()
+                                    tmp['__disp'] = np.where(tmp['__dd']!='', tmp['__dd'] + '-' + tmp['__nn'], tmp['__nn'])
+                                    tit_name_set = set(tmp.loc[tmp['__tit']==True, '__disp'].astype(str).str.lower().tolist())
+                        except Exception:
+                            tit_name_set = set()
 
                         # Mapeo estricto de la tabla provista (izquierda -> derecha)
                         strict_map = [
@@ -2184,6 +2423,25 @@ if (ejecutar or ('tablas' in st.session_state)):
                         cols_sum = cols_sum + ['+-']
                         # Agrupar por jugador
                         agg = df_t.groupby(name_col, as_index=False)[cols_sum].sum()
+                        # Columna Titular (estrella y 🔥 si aplica) por nombre (comparación exacta con el formato "DD-Nombre")
+                        try:
+                            def _norm_name(s: Any) -> str:
+                                s = re.sub(r"\s+", " ", str(s).strip())
+                                return s.lower()
+                            tit_name_norm = set((_norm_name(x) for x in tit_name_set)) if tit_name_set else set()
+                            # set de fuego (top-5 u2m) según condición
+                            top_u2m = top5_u2m_loc if condicion.upper()=='LOCAL' else top5_u2m_vis
+                            top_u2m_norm = set((_norm_name(x) for x in top_u2m)) if top_u2m else set()
+                            def is_tit(nm: Any) -> str:
+                                s = str(nm).strip()
+                                if s == 'Totales':
+                                    return ''
+                                by_name = (_norm_name(s) in tit_name_norm) if tit_name_norm else False
+                                has_fire = (_norm_name(s) in top_u2m_norm) if top_u2m_norm else False
+                                return ('⭐' if by_name else '') + ('🔥' if has_fire else '')
+                            agg['Titular'] = agg[name_col].map(is_tit)
+                        except Exception:
+                            agg['Titular'] = ''
                         # Derivadas simples
                         agg['rebotetotal'] = agg['rebotedefensivo'] + agg['reboteofensivo']
                         agg['puntos'] = agg['canasta1p'] + 2*agg['canasta2p'] + 3*agg['canasta3p']
@@ -2215,8 +2473,25 @@ if (ejecutar or ('tablas' in st.session_state)):
                         if '+-' in total_row:
                             total_row['+-'] = ''
                         agg = pd.concat([agg, pd.DataFrame([total_row])], ignore_index=True)
+                        # Asegurar que 'Titular' quede vacío en la fila Totales
+                        if 'Titular' in agg.columns:
+                            agg.loc[agg[name_col]=='Totales','Titular'] = ''
                         # Pasar por _build_table para formato (conv/att y %)
-                        return _build_table(agg)
+                        out = _build_table(agg)
+                        # Reordenar para que 'Titular' sea la 2da columna (sin título)
+                        name_display = None
+                        for cand in ['Nombre', 'nombre', 'Jugador', name_col]:
+                            if cand in out.columns:
+                                name_display = cand
+                                break
+                        if name_display and 'Titular' in out.columns:
+                            cols = out.columns.tolist()
+                            # remover y reinsertar
+                            cols.remove('Titular')
+                            insert_idx = cols.index(name_display) + 1 if name_display in cols else 1
+                            cols.insert(insert_idx, 'Titular')
+                            out = out[cols]
+                        return out
 
                     tbl_loc = make_table(jg_f, 'LOCAL')
                     tbl_vis = make_table(jg_f, 'VISITANTE')
@@ -2236,14 +2511,25 @@ if (ejecutar or ('tablas' in st.session_state)):
                             <strong>LOCAL - {local_title}</strong>
                         </div>
                     """, unsafe_allow_html=True)
-                    st.dataframe(tbl_loc, use_container_width=True, hide_index=True, column_config=build_column_config(tbl_loc))
+                    # Colorear estrella con color del equipo
+                    def style_star(df: pd.DataFrame, color_hex: str):
+                        if isinstance(df, pd.DataFrame) and 'Titular' in df.columns:
+                            return df.style.applymap(lambda v: f'color: {color_hex}' if str(v) == '⭐' else '', subset=['Titular'])
+                        return df
+                    # (Eliminado post-proceso de fueguito en jugadores)
+                    styled_loc = style_star(tbl_loc, color_local)
+                    st.dataframe(styled_loc, use_container_width=True, hide_index=True, column_config=build_column_config(tbl_loc))
+                    # Leyenda solo para estrella
+                    st.caption("⭐ Quinteto titular")
 
                     st.markdown(f"""
                         <div style='text-align:center;background:{color_visitante};color:{tc_visitante};padding:10px;border-radius:6px;margin:16px 0 8px;'>
                             <strong>VISITANTE - {visitante_title}</strong>
                         </div>
                     """, unsafe_allow_html=True)
-                    st.dataframe(tbl_vis, use_container_width=True, hide_index=True, column_config=build_column_config(tbl_vis))
+                    styled_vis = style_star(tbl_vis, color_visitante)
+                    st.dataframe(styled_vis, use_container_width=True, hide_index=True, column_config=build_column_config(tbl_vis))
+                    st.caption("⭐ Quinteto titular")
                 else:
                     st.info('No hay jugadoresAgregado para generar estadística')
 
@@ -2308,7 +2594,13 @@ if (ejecutar or ('tablas' in st.session_state)):
                         qg_f = qg_f[qg_f[u2m_col].astype(str) == str(sel_u2m_q)]
 
                     # Construcción de tablas por Condicion, agrupando por quinteto
-                    def make_quintetos_table(df_src: pd.DataFrame, condicion: str) -> pd.DataFrame:
+                    def make_quintetos_table(
+                        df_src: pd.DataFrame,
+                        condicion: str,
+                        mark_init: Optional[set]=None,
+                        mark_pm_max: Optional[set]=None,
+                        mark_pm_min: Optional[set]=None,
+                    ) -> pd.DataFrame:
                         df_t = df_src[df_src.get('Condicion', '').astype(str).str.upper() == condicion.upper()].copy()
                         if df_t.empty:
                             return pd.DataFrame()
@@ -2325,7 +2617,30 @@ if (ejecutar or ('tablas' in st.session_state)):
                         sum_cols = base_cols + fav_cols + con_cols
                         if not sum_cols:
                             return pd.DataFrame()
-                        agg = df_t.groupby(name_col, as_index=False)[sum_cols].sum()
+                        keep_cols = [name_col] + sum_cols
+                        agg = (
+                            df_t
+                            .groupby([name_col], as_index=False)[keep_cols]
+                            .sum(numeric_only=True)
+                        )
+                        # Agregar columna de marca (símbolos) antes de formatear nombres
+                        init_sym = '⭐'    # quinteto inicial (igual que en tabla de jugadores)
+                        pm_up_sym = '🟢↑' # mayor +/-
+                        pm_dn_sym = '🔴↓' # menor +/-
+                        def mark_symbol(qs: str) -> str:
+                            sym = ''
+                            q = str(qs)
+                            if mark_init and q in mark_init:
+                                sym += init_sym
+                            if mark_pm_max and q in mark_pm_max:
+                                sym += pm_up_sym
+                            if mark_pm_min and q in mark_pm_min:
+                                sym += pm_dn_sym
+                            return sym
+                        try:
+                            agg['Marca'] = agg[name_col].apply(mark_symbol)
+                        except Exception:
+                            agg['Marca'] = ''
                         # Ordenar por tiempo_jugado desc si existe antes de agregar Totales
                         if 'tiempo_jugado' in agg.columns:
                             agg = agg.sort_values(by=['tiempo_jugado'], ascending=False).reset_index(drop=True)
@@ -2420,14 +2735,21 @@ if (ejecutar or ('tablas' in st.session_state)):
                             except Exception:
                                 return str(qs)
                         agg[name_col] = agg[name_col].apply(short_quinteto)
-                        # Orden de columnas: como jugadores: Quinteto, Tiempo, Puntos a favor/en contra, Diferencia, eficiencias, luego pares Favor/Contra en orden amigable
+                        # Reordenar para que 'Marca' sea segunda columna (sin título)
+                        if 'Marca' in agg.columns:
+                            cols = agg.columns.tolist()
+                            if name_col in cols:
+                                cols.remove('Marca')
+                                insert_idx = 1
+                                cols.insert(insert_idx, 'Marca')
+                                agg = agg[cols]
+                        # Orden de columnas: como jugadores: Quinteto, Tiempo, Puntos a favor/en contra, Diferencia, eficiencias, luego pares Favor/Contra
                         preferred = [
-                            name_col, 'Tiempo Jugado', 'puntos_favor', 'puntos_contra', 'diferencia', '+-',
+                            name_col, 'Marca', 'Tiempo Jugado', 'puntos_favor', 'puntos_contra', 'diferencia', '+-',
                             '1P Favor', '%1P Favor', '1P Contra', '%1P Contra',
                             '2P Favor', '%2P Favor', '2P Contra', '%2P Contra',
                             '3P Favor', '%3P Favor', '3P Contra', '%3P Contra',
                         ]
-                        # Ordenar pares Favor/Contra por métrica base
                         base_priority = [
                             'REBOTE-DEFENSIVO', 'REBOTE-OFENSIVO', 'ASISTENCIA', 'PERDIDA', 'RECUPERACION',
                             'FALTA-COMETIDA', 'FALTA-RECIBIDA',
@@ -2443,12 +2765,9 @@ if (ejecutar or ('tablas' in st.session_state)):
                                 pair_cols.append(fcol)
                             if ccol in agg.columns:
                                 pair_cols.append(ccol)
-                        # Armar orden final
                         ordered = [c for c in preferred if c in agg.columns] + [c for c in pair_cols if c not in preferred]
-                        # Agregar resto
                         ordered += [c for c in agg.columns if c not in ordered]
                         agg = agg[ordered]
-
                         # Renombrar columnas a etiquetas amigables
                         def nice_label(col: str) -> str:
                             mapping_base = {
@@ -2484,20 +2803,160 @@ if (ejecutar or ('tablas' in st.session_state)):
                                 base_label = mapping_base.get(base, base.title())
                                 return f"{base_label} {side}"
                             return col
-
                         agg = agg.rename(columns={c: nice_label(c) for c in agg.columns})
-                        # Quitar columnas posteriores a 'Recup. Contra'
-                        if 'Recup. Contra' in agg.columns:
-                            keep_until = []
-                            for c in agg.columns:
-                                keep_until.append(c)
-                                if c == 'Recup. Contra':
-                                    break
-                            agg = agg[keep_until]
                         return agg
 
-                    tbl_loc_q = make_quintetos_table(qg_f, 'LOCAL')
-                    tbl_vis_q = make_quintetos_table(qg_f, 'VISITANTE')
+                    # Calcular marcas de quinteto inicial y más minutos en últimos 2 min (Q4+)
+                    def compute_marks(df: pd.DataFrame, condicion: str):
+                        base = df[df.get('Condicion', '').astype(str).str.upper() == condicion.upper()].copy()
+                        if base.empty:
+                            return set(), set()
+                        # Asegurar columnas (detectar nombres alternativos)
+                        per_col = _first_col(base, ['numero_periodo','periodo','Periodo']) or 'numero_periodo'
+                        u2m_col = _first_col(base, ['ultimos_dos_minutos','ultimos2min','ultimos_dos','u2m','Ultimos 2 min','Últimos dos min']) or 'ultimos_dos_minutos'
+                        per = pd.to_numeric(base.get(per_col, 0), errors='coerce').fillna(0)
+                        base['__per'] = per
+                        # ultimos_dos_minutos puede venir como texto 'Últimos dos min'. Hacer comparación robusta sin acentos ni mayúsculas
+                        def _norm_txt(x: Any) -> str:
+                            s = str(x)
+                            s = s.replace('Ú','U').replace('ú','u').replace('ó','o').replace('í','i').replace('á','a').replace('é','e')
+                            return s.strip().lower()
+                        base['__u2m'] = base.get(u2m_col, '').apply(_norm_txt).isin(['ultimos dos min','u2m','true','1','si','sí','s'])
+                        # Parse tiempo_jugado a segundos (mm:ss o numérico)
+                        def _to_secs(v: Any) -> float:
+                            try:
+                                s = str(v)
+                                if ':' in s:
+                                    mm, ss = s.split(':', 1)
+                                    return float(int(mm) * 60 + int(ss))
+                                return float(pd.to_numeric(v, errors='coerce'))
+                            except Exception:
+                                return 0.0
+                        base['__t'] = base.get('tiempo_jugado', 0).apply(_to_secs)
+                        # Función para extraer dorsales de un quinteto (como conjunto de dos dígitos)
+                        def two_digit(v):
+                            try:
+                                iv = int(pd.to_numeric(v, errors='coerce'))
+                                return f"{iv:02d}"
+                            except Exception:
+                                return None
+                        def quinteto_dorsales(qv):
+                            s = ''
+                            if isinstance(qv, (list, tuple)):
+                                parts = [str(x) for x in qv]
+                                s = ' '.join(parts)
+                            else:
+                                s = str(qv)
+                            # Buscar números de 1 o 2 dígitos y también prefijos 'DD-'
+                            nums = set()
+                            for m in re.findall(r"\b(\d{1,2})\b", s):
+                                td = two_digit(m)
+                                if td:
+                                    nums.add(td)
+                            for m in re.findall(r"\b(\d{2})-", s):
+                                td = two_digit(m)
+                                if td:
+                                    nums.add(td)
+                            return nums
+                        # Obtener dorsales titulares desde planillas
+                        plan_df = tablas.get('estadisticas_equipolocal' if condicion.upper()=='LOCAL' else 'estadisticas_equipovisitante', pd.DataFrame())
+                        starters = set()
+                        if not plan_df.empty:
+                            dcol = None
+                            for c in ['dorsal','numero','nro','número','numero_camiseta','n_camisa']:
+                                if c in plan_df.columns:
+                                    dcol = c
+                                    break
+                            tcol = None
+                            for c in ['quintetotitular','quinteto_titular','QuintetoTitular','quintetoTitular','titular','es_titular']:
+                                if c in plan_df.columns:
+                                    tcol = c
+                                    break
+                            if dcol and tcol:
+                                tmp = plan_df[[dcol, tcol]].copy()
+                                tmp['__tit'] = tmp[tcol].astype(str).str.lower().isin(['true','1','si','sí','t','x'])
+                                starters = set([two_digit(v) for v in tmp.loc[tmp['__tit'], dcol].tolist() if two_digit(v) is not None])
+                        init_set = set()
+                        if starters and len(starters) >= 5:
+                            # Encontrar fila cuyo quinteto contenga todos los dorsales titulares
+                            for _, r in base.iterrows():
+                                qs = r.get('quinteto')
+                                nums = quinteto_dorsales(qs)
+                                if starters.issubset(nums):
+                                    init_set.add(str(qs))
+                        # Últimos 2 min: periodo >=4 y flag u2m -> más tiempo jugado
+                        u2 = base[(base['__per'] >= 4) & (base['__u2m'])]
+                        u2m_set = set()
+                        if not u2.empty:
+                            idx2 = u2.groupby('quinteto')['__t'].sum().sort_values(ascending=False).head(1).index
+                            u2m_set = set([str(x) for x in idx2.tolist()])
+                        return init_set, u2m_set
+
+                    init_loc, u2m_loc = compute_marks(qg, 'LOCAL')
+                    init_vis, u2m_vis = compute_marks(qg, 'VISITANTE')
+
+                    # Marcar mayor y menor +/- por equipo
+                    def mark_pm(df: pd.DataFrame, condicion: str) -> tuple[set, set]:
+                        b = df[df.get('Condicion','').astype(str).str.upper()==condicion.upper()].copy()
+                        if b.empty:
+                            return set(), set()
+                        # Si no existe 'diferencia', derivar como puntos_favor - puntos_contra
+                        if 'diferencia' not in b.columns:
+                            try:
+                                b['diferencia'] = pd.to_numeric(b.get('puntos_favor',0), errors='coerce').fillna(0) - pd.to_numeric(b.get('puntos_contra',0), errors='coerce').fillna(0)
+                            except Exception:
+                                b['diferencia'] = 0
+                        g = b.groupby('quinteto')['diferencia'].sum()
+                        if g.empty:
+                            return set(), set()
+                        srt = g.sort_values(ascending=False)
+                        top = srt.head(1).index
+                        bottom = srt.tail(1).index
+                        return set([str(x) for x in top.tolist()]), set([str(x) for x in bottom.tolist()])
+
+                    maxpm_loc, minpm_loc = mark_pm(qg, 'LOCAL')
+                    maxpm_vis, minpm_vis = mark_pm(qg, 'VISITANTE')
+
+                    # Pasar conjuntos combinados a la tabla
+                    tbl_loc_q = make_quintetos_table(qg_f, 'LOCAL', init_loc, maxpm_loc, minpm_loc)
+                    tbl_vis_q = make_quintetos_table(qg_f, 'VISITANTE', init_vis, maxpm_vis, minpm_vis)
+                    # Post-proceso: marcar 🔥 en quintetos usando SOLO la tabla mostrada y filtro de esta pestaña
+                    def _norm_txt_q(x: Any) -> str:
+                        s = str(x)
+                        return s.replace('Ú','U').replace('ú','u').replace('ó','o').replace('í','i').replace('á','a').replace('é','e').strip().lower()
+                    u2m_sel_q = _norm_txt_q(st.session_state.get('q_sel_u2m','TODOS'))
+                    def _parse_secs_q(v: Any) -> float:
+                        try:
+                            s = str(v)
+                            if ':' in s:
+                                mm, ss = s.split(':', 1)
+                                return float(int(mm)*60 + int(ss))
+                            return float(pd.to_numeric(v, errors='coerce'))
+                        except Exception:
+                            return 0.0
+                    def add_fire_quinteto(df_in: pd.DataFrame) -> pd.DataFrame:
+                        if not isinstance(df_in, pd.DataFrame) or df_in.empty:
+                            return df_in
+                        if u2m_sel_q != 'ultimos dos min':
+                            return df_in
+                        if 'Tiempo Jugado' not in df_in.columns:
+                            return df_in
+                        work = df_in.copy()
+                        work['__sec'] = work['Tiempo Jugado'].apply(_parse_secs_q)
+                        # excluir Totales
+                        name_col_cur = 'Quinteto' if 'Quinteto' in work.columns else None
+                        if name_col_cur is None:
+                            return df_in
+                        mask = work[name_col_cur].astype(str).str.strip().ne('Totales')
+                        if not mask.any():
+                            return df_in
+                        idx_max = work[mask]['__sec'].idxmax()
+                        if 'Marca' not in work.columns:
+                            work['Marca'] = ''
+                        work.at[idx_max, 'Marca'] = str(work.at[idx_max, 'Marca']) + '🔥'
+                        return work
+                    tbl_loc_q = add_fire_quinteto(tbl_loc_q)
+                    tbl_vis_q = add_fire_quinteto(tbl_vis_q)
 
                     # Usar mismos colores que en Resumen
                     row = part_df.iloc[0] if not part_df.empty else {}
@@ -2516,6 +2975,7 @@ if (ejecutar or ('tablas' in st.session_state)):
                     """, unsafe_allow_html=True)
                     if not tbl_loc_q.empty:
                         st.dataframe(tbl_loc_q, use_container_width=True, hide_index=True, column_config=build_column_config(tbl_loc_q))
+                        st.caption("⭐ Quinteto inicial   ·   🟢↑ Mayor +/-   ·   🔴↓ Menor +/-")
                     else:
                         st.info('Sin datos de quintetos LOCAL para los filtros seleccionados')
 
@@ -2526,10 +2986,56 @@ if (ejecutar or ('tablas' in st.session_state)):
                     """, unsafe_allow_html=True)
                     if not tbl_vis_q.empty:
                         st.dataframe(tbl_vis_q, use_container_width=True, hide_index=True, column_config=build_column_config(tbl_vis_q))
+                        st.caption("⭐ Quinteto inicial   ·   🟢↑ Mayor +/-   ·   🔴↓ Menor +/-")
                     else:
                         st.info('Sin datos de quintetos VISITANTE para los filtros seleccionados')
                 else:
                     st.info('No hay datos de quintetos para mostrar')
+
+
+            # Pestaña auxiliar: Planillas Local/Visitante con columna DD_NOMBRE
+            # with t_aux_planillas:
+            #     st.subheader('Planillas (auxiliar)')
+            #     plan_loc = tablas.get('estadisticas_equipolocal', pd.DataFrame()).copy()
+            #     plan_vis = tablas.get('estadisticas_equipovisitante', pd.DataFrame()).copy()
+
+            #     def _first_col2(df: pd.DataFrame, cands: list[str]) -> str:
+            #         for c in cands:
+            #             if c in df.columns:
+            #                 return c
+            #         return ''
+
+            #     def two_digit(v: Any) -> str:
+            #         try:
+            #             iv = int(pd.to_numeric(v, errors='coerce'))
+            #             return f"{iv:02d}"
+            #         except Exception:
+            #             return ''
+
+            #     def add_dd_nombre(df: pd.DataFrame) -> pd.DataFrame:
+            #         if df is None or df.empty:
+            #             return df
+            #         dcol = _first_col2(df, ['dorsal','numero','nro','número','numero_camiseta','n_camisa'])
+            #         ncol = _first_col2(df, ['Nombre','nombre','Jugador','jugador','nombre_jugador','NombreJugador'])
+            #         out = df.copy()
+            #         if dcol and ncol:
+            #             out['DD_NOMBRE'] = out.apply(lambda r: (two_digit(r.get(dcol)) + ' - ' + str(r.get(ncol)).strip()).strip(' -'), axis=1)
+            #         elif ncol:
+            #             out['DD_NOMBRE'] = out[ncol].astype(str).str.strip()
+            #         else:
+            #             out['DD_NOMBRE'] = ''
+            #         return out
+
+            #     plan_loc_v = add_dd_nombre(plan_loc)
+            #     plan_vis_v = add_dd_nombre(plan_vis)
+
+            #     col1, col2 = st.columns(2)
+            #     with col1:
+            #         st.markdown('Local (estadisticas_equipolocal)')
+            #         st.dataframe(plan_loc_v, use_container_width=True, hide_index=True)
+            #     with col2:
+            #         st.markdown('Visitante (estadisticas_equipovisitante)')
+            #         st.dataframe(plan_vis_v, use_container_width=True, hide_index=True)
 
 
 else:
