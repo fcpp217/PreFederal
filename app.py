@@ -27,6 +27,249 @@ ESTADISTICAS_URL = "https://appaficioncabb.indalweb.net/envivonavegador/estadist
 # ------------------------------
 # Helpers UI
 # ------------------------------
+def render_pdf_button():
+    """Renderiza un botón para descargar la pestaña actual como PDF."""
+    components.html("""
+    <button id="pdfBtn" style="background:#0f62fe;color:#fff;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-weight:600;font-size:14px;box-shadow:0 2px 6px rgba(0,0,0,0.15);width:100%;">
+      📄 Descargar PDF
+    </button>
+    <script>
+    document.getElementById('pdfBtn').onclick = async function() {
+      const btn = this;
+      btn.textContent = '⏳ Generando...';
+      btn.disabled = true;
+      
+      try {
+        const parentDoc = window.parent.document;
+        
+        const loadLib = (src) => {
+          return new Promise((resolve, reject) => {
+            if (parentDoc.querySelector('script[src="' + src + '"]')) {
+              resolve();
+              return;
+            }
+            const s = parentDoc.createElement('script');
+            s.src = src;
+            s.onload = resolve;
+            s.onerror = reject;
+            parentDoc.head.appendChild(s);
+          });
+        };
+        
+        await loadLib('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js');
+        await loadLib('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+        
+        let w = 0;
+        while ((!window.parent.html2canvas || !window.parent.jspdf) && w < 50) {
+          await new Promise(r => setTimeout(r, 100));
+          w++;
+        }
+        
+        if (!window.parent.html2canvas || !window.parent.jspdf) {
+          alert('Error cargando librerías');
+          btn.textContent = '📄 Descargar PDF';
+          btn.disabled = false;
+          return;
+        }
+        
+        const { jsPDF } = window.parent.jspdf;
+        const pdf = new jsPDF('l', 'mm', 'a4');
+        
+        // Nueva estrategia: capturar TODO el contenedor de tabs
+        const tabsContainer = parentDoc.querySelector('[data-testid="stTabs"]');
+        
+        if (!tabsContainer) {
+          alert('No se encontró el contenedor de pestañas');
+          btn.textContent = '📄 Descargar PDF';
+          btn.disabled = false;
+          return;
+        }
+        
+        // Forzar que TODOS los paneles sean visibles temporalmente
+        const allPanels = tabsContainer.querySelectorAll('[role="tabpanel"]');
+        const originalPanelStyles = [];
+        
+        allPanels.forEach((panel, idx) => {
+          originalPanelStyles[idx] = {
+            display: panel.style.display,
+            visibility: panel.style.visibility,
+            height: panel.style.height,
+            overflow: panel.style.overflow,
+            ariaHidden: panel.getAttribute('aria-hidden')
+          };
+          
+          // Forzar visibilidad
+          panel.style.display = 'block';
+          panel.style.visibility = 'visible';
+          panel.style.height = 'auto';
+          panel.style.overflow = 'visible';
+          panel.removeAttribute('aria-hidden');
+        });
+        
+        // Esperar a que se renderice todo
+        await new Promise(r => setTimeout(r, 2500));
+        
+        // Ahora buscar el panel activo que debería tener contenido
+        let tab = null;
+        for (let panel of allPanels) {
+          if (panel.scrollHeight > 0) {
+            // Encontrar el panel que corresponde a la pestaña activa
+            const tabButton = tabsContainer.querySelector('[role="tab"][aria-selected="true"]');
+            if (tabButton) {
+              const tabId = tabButton.getAttribute('aria-controls');
+              if (panel.id === tabId) {
+                tab = panel;
+                break;
+              }
+            }
+            // Si no encontramos por ID, usar el primero con contenido
+            if (!tab) tab = panel;
+          }
+        }
+        
+        if (!tab || tab.scrollHeight === 0) {
+          // Restaurar estilos
+          allPanels.forEach((panel, idx) => {
+            if (originalPanelStyles[idx]) {
+              panel.style.display = originalPanelStyles[idx].display;
+              panel.style.visibility = originalPanelStyles[idx].visibility;
+              panel.style.height = originalPanelStyles[idx].height;
+              panel.style.overflow = originalPanelStyles[idx].overflow;
+              if (originalPanelStyles[idx].ariaHidden) {
+                panel.setAttribute('aria-hidden', originalPanelStyles[idx].ariaHidden);
+              }
+            }
+          });
+          
+          alert('No se pudo encontrar contenido en ninguna pestaña');
+          btn.textContent = '📄 Descargar PDF';
+          btn.disabled = false;
+          return;
+        }
+        
+        // Expandir todas las tablas y contenedores
+        const tables = tab.querySelectorAll('[data-testid="stDataFrame"]');
+        const originalStyles = [];
+        tables.forEach((table, idx) => {
+          const container = table.closest('div[style*="height"]') || table.closest('div[style*="max-height"]');
+          if (container) {
+            originalStyles[idx] = container.style.cssText;
+            container.style.height = 'auto';
+            container.style.maxHeight = 'none';
+            container.style.overflow = 'visible';
+          }
+        });
+        
+        // Forzar que todos los contenedores internos sean visibles
+        const allContainers = tab.querySelectorAll('div[style*="overflow"]');
+        const containerStyles = [];
+        allContainers.forEach((cont, idx) => {
+          containerStyles[idx] = cont.style.cssText;
+          cont.style.overflow = 'visible';
+          cont.style.height = 'auto';
+          cont.style.maxHeight = 'none';
+        });
+        
+        // Esperar un poco más después de expandir
+        await new Promise(r => setTimeout(r, 1200));
+        
+        const canvas = await window.parent.html2canvas(tab, {
+          scale: 1.0,
+          useCORS: true, 
+          backgroundColor: '#fff', 
+          logging: false,
+          windowHeight: tab.scrollHeight + 100,
+          height: tab.scrollHeight + 100,
+          scrollY: -window.scrollY,
+          scrollX: -window.scrollX,
+          allowTaint: true
+        });
+        
+        // Restaurar estilos originales
+        tables.forEach((table, idx) => {
+          const container = table.closest('div[style*="height"]') || table.closest('div[style*="max-height"]');
+          if (container && originalStyles[idx]) {
+            container.style.cssText = originalStyles[idx];
+          }
+        });
+        allContainers.forEach((cont, idx) => {
+          if (containerStyles[idx]) {
+            cont.style.cssText = containerStyles[idx];
+          }
+        });
+        
+        // Restaurar estilos de todos los paneles
+        allPanels.forEach((panel, idx) => {
+          if (originalPanelStyles[idx]) {
+            panel.style.display = originalPanelStyles[idx].display;
+            panel.style.visibility = originalPanelStyles[idx].visibility;
+            panel.style.height = originalPanelStyles[idx].height;
+            panel.style.overflow = originalPanelStyles[idx].overflow;
+            if (originalPanelStyles[idx].ariaHidden) {
+              panel.setAttribute('aria-hidden', originalPanelStyles[idx].ariaHidden);
+            }
+          }
+        });
+        
+        const img = canvas.toDataURL('image/png');
+        const pageW = pdf.internal.pageSize.getWidth();
+        const pageH = pdf.internal.pageSize.getHeight();
+        const margin = 10;
+        const imgW = pageW - (2 * margin);
+        const imgH = canvas.height * imgW / canvas.width;
+        
+        if (imgH <= (pageH - 2 * margin)) {
+          pdf.addImage(img, 'PNG', margin, margin, imgW, imgH);
+        } else {
+          const usableHeight = pageH - (2 * margin);
+          let srcY = 0;
+          let pageNum = 0;
+          
+          while (srcY < canvas.height) {
+            if (pageNum > 0) pdf.addPage('a4', 'l');
+            
+            const remaining = canvas.height - srcY;
+            const srcH = Math.min(remaining, (usableHeight * canvas.width) / imgW);
+            
+            // Validar que srcH sea mayor que 0
+            if (srcH <= 0) break;
+            
+            const destH = (srcH * imgW) / canvas.width;
+            
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = canvas.width;
+            tempCanvas.height = Math.ceil(srcH);
+            const tempCtx = tempCanvas.getContext('2d');
+            
+            // Validar dimensiones antes de dibujar
+            if (tempCanvas.width > 0 && tempCanvas.height > 0) {
+              tempCtx.drawImage(canvas, 0, srcY, canvas.width, srcH, 0, 0, canvas.width, srcH);
+              pdf.addImage(tempCanvas.toDataURL('image/png'), 'PNG', margin, margin, imgW, destH);
+            }
+            
+            // Avanzar sin overlap para evitar problemas
+            srcY += srcH;
+            pageNum++;
+            
+            if (pageNum > 30) break;
+          }
+        }
+        
+        pdf.save('estadisticas.pdf');
+        btn.textContent = '✅ Descargado';
+        setTimeout(() => {
+          btn.textContent = '📄 Descargar PDF';
+          btn.disabled = false;
+        }, 2000);
+      } catch (e) {
+        alert('Error: ' + e.message);
+        btn.textContent = '📄 Descargar PDF';
+        btn.disabled = false;
+      }
+    };
+    </script>
+    """, height=50)
+
 def _parse_color(c: Any, fallback: str) -> str:
     try:
         s = str(c).strip()
@@ -1042,31 +1285,7 @@ def descargar_y_transformar(partido_id: str) -> Dict[str, pd.DataFrame]:
 # UI
 # ------------------------------
 # Estilos ligeros (mantener tema claro) y centrado de títulos
-st.markdown(
-    """
-    <style>
-    h1, h2, h3, h4, h5, h6 {
-        text-align: center;
-    }
-    /* Reducir ancho del input de texto */
-    .stTextInput > div > div > input {
-        max-width: 160px;
-        width: 160px;
-        text-align: center;
-    }
-    /* Hacer que el botón tenga el mismo ancho que el input y quede debajo */
-    .stButton > button {
-        max-width: 160px;
-        width: 160px;
-    }
-    /* Centrar el contenedor de entrada */
-    .block-container {
-        padding-top: 1rem;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+# Sin estilos personalizados para evitar unsafe_allow_html
 
 st.title("Estadísticas Basquet")
 
@@ -1123,6 +1342,9 @@ if (ejecutar or ('tablas' in st.session_state)):
 
         # Pestaña Resumen
         with t_resumen:
+            # Botón de descarga PDF
+            render_pdf_button()
+            
             part_df = tablas.get('partido', pd.DataFrame())
             pbp_df = tablas.get('pbp', pd.DataFrame())
             est_loc_df = tablas.get('estadisticas_equipolocal', pd.DataFrame())
@@ -1205,39 +1427,26 @@ if (ejecutar or ('tablas' in st.session_state)):
                 except Exception:
                     pass
 
-            local_line_html = f"<div style='font-size:13px; opacity:0.9; margin-top:6px; text-align:right'>{local_line}</div>" if local_line else ''
-            visit_line_html = f"<div style='font-size:13px; opacity:0.9; margin-top:6px; text-align:right'>{visit_line}</div>" if visit_line else ''
-
-            # Render con columnas confiables
+            # Render con columnas y colores de equipo - tarjetas más compactas
             c1, c2 = st.columns(2)
             with c1:
-                st.markdown(
-                    f"""
-                    <div style='background:{color_local}; color:{tc_local}; padding:16px; border-radius:16px; box-shadow:0 2px 8px rgba(0,0,0,0.08)'>
-                        <div style='font-size:13px; font-weight:600; opacity:0.9; text-transform:uppercase; letter-spacing:.04em'>Local</div>
-                        <div style='display:flex; justify-content:space-between; align-items:center; gap:8px'>
-                            <div style='font-size:28px; font-weight:700; line-height:1.1'>{local_name}</div>
-                            <div style='font-size:44px; font-weight:800'>{int(tanteo_local) if (tanteo_local is not None and str(tanteo_local).strip() != '' and not pd.isna(tanteo_local)) else '-'}</div>
-                        </div>
-                        {local_line_html}
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+                st.markdown(f"""
+                <div style='background:{color_local}; color:{tc_local}; padding:12px 16px; border-radius:10px; text-align:center;'>
+                    <div style='font-size:12px; opacity:0.85; margin-bottom:4px;'>🏀 LOCAL</div>
+                    <div style='font-size:20px; font-weight:700; margin-bottom:2px;'>{local_name}</div>
+                    <div style='font-size:36px; font-weight:800;'>{int(tanteo_local) if (tanteo_local is not None and str(tanteo_local).strip() != '' and not pd.isna(tanteo_local)) else '-'}</div>
+                    {f"<div style='font-size:11px; opacity:0.8; margin-top:4px;'>{local_line}</div>" if local_line else ""}
+                </div>
+                """, unsafe_allow_html=True)
             with c2:
-                st.markdown(
-                    f"""
-                    <div style='background:{color_visitante}; color:{tc_visitante}; padding:16px; border-radius:16px; box-shadow:0 2px 8px rgba(0,0,0,0.08)'>
-                        <div style='font-size:13px; font-weight:600; opacity:0.9; text-transform:uppercase; letter-spacing:.04em'>Visitante</div>
-                        <div style='display:flex; justify-content:space-between; align-items:center; gap:8px'>
-                            <div style='font-size:28px; font-weight:700; line-height:1.1'>{visitante_name}</div>
-                            <div style='font-size:44px; font-weight:800'>{int(tanteo_visitante) if (tanteo_visitante is not None and str(tanteo_visitante).strip() != '' and not pd.isna(tanteo_visitante)) else '-'}</div>
-                        </div>
-                        {visit_line_html}
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+                st.markdown(f"""
+                <div style='background:{color_visitante}; color:{tc_visitante}; padding:12px 16px; border-radius:10px; text-align:center;'>
+                    <div style='font-size:12px; opacity:0.85; margin-bottom:4px;'>🏀 VISITANTE</div>
+                    <div style='font-size:20px; font-weight:700; margin-bottom:2px;'>{visitante_name}</div>
+                    <div style='font-size:36px; font-weight:800;'>{int(tanteo_visitante) if (tanteo_visitante is not None and str(tanteo_visitante).strip() != '' and not pd.isna(tanteo_visitante)) else '-'}</div>
+                    {f"<div style='font-size:11px; opacity:0.8; margin-top:4px;'>{visit_line}</div>" if visit_line else ""}
+                </div>
+                """, unsafe_allow_html=True)
 
             # Gráfico de evolución de puntos desde PBP
             if not pbp_df.empty:
@@ -1249,7 +1458,7 @@ if (ejecutar or ('tablas' in st.session_state)):
                     opciones_periodo = ['TODOS'] + periodos
                     sel_periodo = st.selectbox('Seleccionar periodo', opciones_periodo, index=0, key='res_sel_per')
                     # Espaciado
-                    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+                    st.write("")
                     chart_height = 600
                     point_size = 120
 
@@ -1715,7 +1924,7 @@ if (ejecutar or ('tablas' in st.session_state)):
                         })
 
                         # Separador visual entre filas
-                        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+                        st.write("")
 
                         bar = (
                             alt.Chart(df_bar)
@@ -1981,28 +2190,28 @@ if (ejecutar or ('tablas' in st.session_state)):
                                         pzona_loc = 0
                                         pzona_vis = 0
 
-                                    # Tarjetas (posición original), con contenido reordenado
-                                    st.markdown(
-                                        f"""
-                                        <div style='{card_style};background:{color_local};color:{tc_local};'>
-                                            <div style='font-weight:700;margin-bottom:6px;'>{local_name}</div>
-                                            <div>Puntos titulares: <strong>{int(pts_tit_loc)}</strong></div>
-                                            <div>Puntos suplentes: <strong>{int(pts_sup_loc)}</strong></div>
-                                            <div>Puntos en la zona (Z1): <strong>{int(pzona_loc)}</strong></div>
-                                            <div>Mejor racha: <strong>{best_L_pts}-0</strong> ({fmt_when(sL, eL) if sL is not None else ''})</div>
-                                            <div>Mayor sequía: <strong>{fmt_drought_tuple(drought_best_L)}</strong></div>
-                                        </div>
-                                        <div style='{card_style};background:{color_visitante};color:{tc_visitante};'>
-                                            <div style='font-weight:700;margin-bottom:6px;'>{visitante_name}</div>
-                                            <div>Puntos titulares: <strong>{int(pts_tit_vis)}</strong></div>
-                                            <div>Puntos suplentes: <strong>{int(pts_sup_vis)}</strong></div>
-                                            <div>Puntos en la zona (Z1): <strong>{int(pzona_vis)}</strong></div>
-                                            <div>Mejor racha: <strong>{best_V_pts}-0</strong> ({fmt_when(sV, eV) if sV is not None else ''})</div>
-                                            <div>Mayor sequía: <strong>{fmt_drought_tuple(drought_best_V)}</strong></div>
-                                        </div>
-                                        """,
-                                        unsafe_allow_html=True,
-                                    )
+                                    # Tarjetas con colores de equipo
+                                    st.markdown(f"""
+                                    <div style='background:{color_local}; color:{tc_local}; padding:16px; border-radius:10px; margin-bottom:12px;'>
+                                        <div style='font-weight:700; font-size:18px; margin-bottom:10px;'>{local_name}</div>
+                                        <div style='margin:4px 0;'>Puntos titulares: <strong>{int(pts_tit_loc)}</strong></div>
+                                        <div style='margin:4px 0;'>Puntos suplentes: <strong>{int(pts_sup_loc)}</strong></div>
+                                        <div style='margin:4px 0;'>Puntos en la zona (Z1): <strong>{int(pzona_loc)}</strong></div>
+                                        <div style='margin:4px 0;'>Mejor racha: <strong>{best_L_pts}-0</strong> ({fmt_when(sL, eL) if sL is not None else ''})</div>
+                                        <div style='margin:4px 0;'>Mayor sequía: <strong>{fmt_drought_tuple(drought_best_L)}</strong></div>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                                    
+                                    st.markdown(f"""
+                                    <div style='background:{color_visitante}; color:{tc_visitante}; padding:16px; border-radius:10px;'>
+                                        <div style='font-weight:700; font-size:18px; margin-bottom:10px;'>{visitante_name}</div>
+                                        <div style='margin:4px 0;'>Puntos titulares: <strong>{int(pts_tit_vis)}</strong></div>
+                                        <div style='margin:4px 0;'>Puntos suplentes: <strong>{int(pts_sup_vis)}</strong></div>
+                                        <div style='margin:4px 0;'>Puntos en la zona (Z1): <strong>{int(pzona_vis)}</strong></div>
+                                        <div style='margin:4px 0;'>Mejor racha: <strong>{best_V_pts}-0</strong> ({fmt_when(sV, eV) if sV is not None else ''})</div>
+                                        <div style='margin:4px 0;'>Mayor sequía: <strong>{fmt_drought_tuple(drought_best_V)}</strong></div>
+                                    </div>
+                                    """, unsafe_allow_html=True)
                                 else:
                                     st.info('Sin suficientes eventos para resumen de rachas')
                             except Exception as e:
@@ -2203,7 +2412,7 @@ if (ejecutar or ('tablas' in st.session_state)):
                         }
 
                         # Render en grilla 5 por fila
-                        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+                        st.write("")
                         st.subheader('Comparativas por variable (Local vs Visitante)')
                         row1 = st.columns(5)
                         with row1[0]:
@@ -2233,6 +2442,9 @@ if (ejecutar or ('tablas' in st.session_state)):
 
             # Pestaña Estadisticas por jugador (desde jugadoresAgregado por jugador, con Totales y derivadas)
             with t_estadistica:
+                # Botón de descarga PDF
+                render_pdf_button()
+                
                 part_df = tablas.get('partido', pd.DataFrame())
                 local_title = str(part_df.iloc[0].get('local')) if not part_df.empty else 'Local'
                 visitante_title = str(part_df.iloc[0].get('visitante')) if not part_df.empty else 'Visitante'
@@ -2547,11 +2759,11 @@ if (ejecutar or ('tablas' in st.session_state)):
                     tc_local = _text_color_for_bg(color_local)
                     tc_visitante = _text_color_for_bg(color_visitante)
 
-                    # Títulos con cajas coloreadas
+                    # Títulos con colores de equipo
                     st.markdown(f"""
-                        <div style='text-align:center;background:{color_local};color:{tc_local};padding:10px;border-radius:6px;margin:8px 0;'>
-                            <strong>LOCAL - {local_title}</strong>
-                        </div>
+                    <div style='background:{color_local}; color:{tc_local}; padding:12px; border-radius:8px; text-align:center; font-weight:700; margin:16px 0 8px;'>
+                        🏀 LOCAL - {local_title}
+                    </div>
                     """, unsafe_allow_html=True)
                     # Colorear estrella con color del equipo
                     def style_star(df: pd.DataFrame, color_hex: str):
@@ -2566,9 +2778,9 @@ if (ejecutar or ('tablas' in st.session_state)):
                     # (Timeline LOCAL movido a pestaña Quintetos)
 
                     st.markdown(f"""
-                        <div style='text-align:center;background:{color_visitante};color:{tc_visitante};padding:10px;border-radius:6px;margin:16px 0 8px;'>
-                            <strong>VISITANTE - {visitante_title}</strong>
-                        </div>
+                    <div style='background:{color_visitante}; color:{tc_visitante}; padding:12px; border-radius:8px; text-align:center; font-weight:700; margin:16px 0 8px;'>
+                        🏀 VISITANTE - {visitante_title}
+                    </div>
                     """, unsafe_allow_html=True)
                     styled_vis = style_star(tbl_vis, color_visitante)
                     st.dataframe(styled_vis, use_container_width=True, hide_index=True, column_config=build_column_config(tbl_vis))
@@ -2579,6 +2791,9 @@ if (ejecutar or ('tablas' in st.session_state)):
 
             # Pestaña Quintetos (agregado de quintetos)
             with t_quintetos:
+                # Botón de descarga PDF
+                render_pdf_button()
+                
                 part_df = tablas.get('partido', pd.DataFrame())
                 local_title = str(part_df.iloc[0].get('local')) if not part_df.empty else 'Local'
                 visitante_title = str(part_df.iloc[0].get('visitante')) if not part_df.empty else 'Visitante'
@@ -3011,11 +3226,11 @@ if (ejecutar or ('tablas' in st.session_state)):
                     tc_local = _text_color_for_bg(color_local)
                     tc_visitante = _text_color_for_bg(color_visitante)
 
-                    # Títulos y tablas
+                    # Títulos y tablas con colores de equipo
                     st.markdown(f"""
-                        <div style='text-align:center;background:{color_local};color:{tc_local};padding:10px;border-radius:6px;margin:8px 0;'>
-                            <strong>LOCAL - {local_title}</strong>
-                        </div>
+                    <div style='background:{color_local}; color:{tc_local}; padding:12px; border-radius:8px; text-align:center; font-weight:700; margin:16px 0 8px;'>
+                        🏀 LOCAL - {local_title}
+                    </div>
                     """, unsafe_allow_html=True)
                     if not tbl_loc_q.empty:
                         st.dataframe(tbl_loc_q, use_container_width=True, hide_index=True, column_config=build_column_config(tbl_loc_q))
@@ -3223,9 +3438,9 @@ if (ejecutar or ('tablas' in st.session_state)):
                         st.info('Sin datos de quintetos LOCAL para los filtros seleccionados')
 
                     st.markdown(f"""
-                        <div style='text-align:center;background:{color_visitante};color:{tc_visitante};padding:10px;border-radius:6px;margin:16px 0 8px;'>
-                            <strong>VISITANTE - {visitante_title}</strong>
-                        </div>
+                    <div style='background:{color_visitante}; color:{tc_visitante}; padding:12px; border-radius:8px; text-align:center; font-weight:700; margin:16px 0 8px;'>
+                        🏀 VISITANTE - {visitante_title}
+                    </div>
                     """, unsafe_allow_html=True)
                     if not tbl_vis_q.empty:
                         st.dataframe(tbl_vis_q, use_container_width=True, hide_index=True, column_config=build_column_config(tbl_vis_q))
