@@ -1207,7 +1207,6 @@ def procesar_pbp_y_agregados(
     return df, df_JugadoresFinal, df_TiempoQuintetos
 
 
-@st.cache_data(show_spinner=False)
 def descargar_y_transformar(partido_id: str) -> Dict[str, pd.DataFrame]:
     # Descargas
     part_payload = fetch_partido(partido_id)
@@ -1303,6 +1302,9 @@ if (ejecutar or ('tablas' in st.session_state)):
             st.error("Ingrese un ID numérico válido.")
         else:
             try:
+                # Limpiar cache de Streamlit para asegurar datos frescos
+                st.cache_data.clear()
+                
                 # Resetear filtros de las 3 pestañas al buscar un nuevo partido
                 for k in ['res_sel_per','estad_sel_per','estad_sel_situ','estad_sel_u2m','q_sel_per','q_sel_situ','q_sel_u2m']:
                     try:
@@ -1310,6 +1312,11 @@ if (ejecutar or ('tablas' in st.session_state)):
                             del st.session_state[k]
                     except Exception:
                         pass
+                
+                # Limpiar datos anteriores antes de buscar nuevos
+                if 'tablas' in st.session_state:
+                    del st.session_state['tablas']
+                
                 with st.spinner("Descargando y procesando datos..."):
                     tablas = descargar_y_transformar(partido_id_input.strip())
                 # Persistir en sesión para evitar re-descarga al cambiar filtros
