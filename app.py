@@ -1,4 +1,5 @@
 import json
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -22,7 +23,35 @@ st.set_page_config(page_title="Estadística", layout="wide")
 # ------------------------------
 PARTIDO_URL = "https://appaficioncabb.indalweb.net/envivonavegador/partido.ashx"
 ESTADISTICAS_URL = "https://appaficioncabb.indalweb.net/envivonavegador/estadisticas.ashx"
+DEFAULT_REQUEST_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Accept-Language": "es-AR,es;q=0.9,en;q=0.8",
+    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+    "Origin": "https://appaficioncabb.indalweb.net",
+    "Referer": "https://appaficioncabb.indalweb.net/envivonavegador/",
+    "X-Requested-With": "XMLHttpRequest",
+}
 
+
+def _get_requests_session() -> requests.Session:
+    s = requests.Session()
+    s.headers.update(DEFAULT_REQUEST_HEADERS)
+    return s
+
+
+def _post_with_retries(url: str, data: Dict[str, Any], timeout: Tuple[int, int] = (10, 120), retries: int = 4) -> requests.Response:
+    last_exc: Optional[Exception] = None
+    s = _get_requests_session()
+    for attempt in range(max(1, retries)):
+        try:
+            return s.post(url, data=data, timeout=timeout)
+        except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError) as e:
+            last_exc = e
+            time.sleep(min(2 ** attempt, 8))
+    if last_exc is not None:
+        raise last_exc
+    return s.post(url, data=data, timeout=timeout)
 
 # ------------------------------
 # Helpers UI
@@ -620,13 +649,13 @@ def agregar_equipo_condicion(df_jugadas: pd.DataFrame, df_partidos: pd.DataFrame
 
 
 def fetch_partido(partido_id: str) -> Dict[str, Any]:
-    resp = requests.post(PARTIDO_URL, data={'id_partido': str(partido_id)}, timeout=30)
+    resp = _post_with_retries(PARTIDO_URL, data={"id_partido": str(partido_id)})
     resp.raise_for_status()
     return resp.json()
 
 
 def fetch_estadisticas(partido_id: str) -> Dict[str, Any]:
-    resp = requests.post(ESTADISTICAS_URL, data={'id_partido': str(partido_id)}, timeout=30)
+    resp = _post_with_retries(ESTADISTICAS_URL, data={"id_partido": str(partido_id)})
     resp.raise_for_status()
     return resp.json()
 
