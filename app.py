@@ -2804,7 +2804,13 @@ if (ejecutar or ('tablas' in st.session_state)):
                     # Colorear estrella con color del equipo
                     def style_star(df: pd.DataFrame, color_hex: str):
                         if isinstance(df, pd.DataFrame) and 'Titular' in df.columns:
-                            return df.style.applymap(lambda v: f'color: {color_hex}' if str(v) == '⭐' else '', subset=['Titular'])
+                            styler = df.style
+                            fn = lambda v: f'color: {color_hex}' if str(v) == '⭐' else ''
+                            if hasattr(styler, 'map'):
+                                return styler.map(fn, subset=['Titular'])
+                            if hasattr(styler, 'applymap'):
+                                return styler.applymap(fn, subset=['Titular'])
+                            return styler
                         return df
                     # (Eliminado post-proceso de fueguito en jugadores)
                     styled_loc = style_star(tbl_loc, color_local)
