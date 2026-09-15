@@ -2,9 +2,11 @@
 
 Se agrupan los tiros de campo (2P/3P, convertidos o no) en tres momentos del
 ataque -0 a 8s, 9 a 16s y 17 a 24s desde que el equipo recuperó la pelota-,
-más un cuarto grupo residual ("+24s") para las posesiones más largas que no
-se quiere ocultar. El objetivo es ver si un equipo tira mejor en transición,
-a mitad de posesión o cuando el ataque se estanca.
+más una categoría aparte para los tiros que llegan tras un rebote ofensivo
+propio (no compiten contra un reloj de 24s nuevo). Los tiros libres no se
+consideran: no reflejan un uso real del reloj de posesión. Sigue la misma
+lógica de filtros que las pestañas de Jugadores y Quintetos (período,
+situación del marcador y momento del período).
 """
 
 from typing import Dict
@@ -15,38 +17,12 @@ import pandas as pd
 import streamlit as st
 
 from ..colors import _parse_color, _text_color_for_bg
-from ..data_processing import ACCIONES_TIRO_DE_CAMPO, BUCKETS_POSESION
+from ..data_processing import BUCKET_A_REVISAR, BUCKETS_POSESION
 from ..pdf_export import render_pdf_button
-from ..utils import _first_of
+from ..possession_stats import preparar_tiros, resumen_por_bucket
+from ..utils import _first_col, _first_of, _stay_estadistica
 
-CONVERTIDAS = {'CANASTA-2P', 'CANASTA-3P'}
-PUNTOS_POR_ACCION = {'CANASTA-2P': 2, 'CANASTA-3P': 3}
-
-
-def _preparar_tiros(pbp_df: pd.DataFrame) -> pd.DataFrame:
-    if pbp_df.empty or 'accion_tipo' not in pbp_df.columns:
-        return pd.DataFrame()
-    d = pbp_df[pbp_df['accion_tipo'].isin(ACCIONES_TIRO_DE_CAMPO)].copy()
-    if d.empty:
-        return d
-    d = d[d.get('bucket_posesion').notna()]
-    d['Tipo'] = np.where(d['accion_tipo'].isin(['CANASTA-2P', 'TIRO2-FALLADO']), '2P', '3P')
-    d['Convertido'] = d['accion_tipo'].isin(CONVERTIDAS)
-    d['Puntos'] = d['accion_tipo'].map(PUNTOS_POR_ACCION).fillna(0)
-    d['Condicion'] = d.get('Condicion', '').astype(str).str.upper()
-    return d
-
-
-def _resumen_por_bucket(d: pd.DataFrame, group_cols: list) -> pd.DataFrame:
-    if d.empty:
-        return pd.DataFrame(columns=group_cols + ['Intentos', 'Convertidos', '%Efectividad', 'Puntos'])
-    agg = d.groupby(group_cols, as_index=False).agg(
-        Intentos=('accion_tipo', 'count'),
-        Convertidos=('Convertido', 'sum'),
-        Puntos=('Puntos', 'sum'),
-    )
-    agg['%Efectividad'] = np.where(agg['Intentos'] > 0, (agg['Convertidos'] / agg['Intentos'] * 100.0).round(1), 0.0)
-    return agg
+BUCKETS_VALIDOS = [b for b in BUCKETS_POSESION if b != BUCKET_A_REVISAR]
 
 
 def render_posesion(tablas: Dict[str, pd.DataFrame]) -> None:
@@ -83,18 +59,47 @@ def render_posesion(tablas: Dict[str, pd.DataFrame]) -> None:
     </div>
     """, unsafe_allow_html=True)
 
-    try:
-        periodos = sorted(pd.to_numeric(pbp_df['numero_periodo'], errors='coerce').dropna().astype(int).unique().tolist())
-    except Exception:
-        periodos = []
-    sel_periodo = st.selectbox('Seleccionar periodo', ['TODOS'] + periodos, index=0, key='pos_sel_per')
+    period_col = _first_col(pbp_df, ['numero_periodo', 'periodo', 'Periodo'])
+    situ_col = _first_col(pbp_df, ['SituacionMarcador', 'Situacion marcador', 'situacion_marcador', 'situacionMarcador', 'situacion', 'Situacion'])
+    u2m_col = _first_col(pbp_df, ['ultimos_dos_minutos', 'ultimos2min', 'ultimos_dos', 'u2m'])
 
-    d = _preparar_tiros(pbp_df)
-    if sel_periodo != 'TODOS' and not d.empty:
-        try:
-            d = d[pd.to_numeric(d['numero_periodo'], errors='coerce') == int(sel_periodo)]
-        except Exception:
-            pass
+    with st.form(key='posesion_filters'):
+        fcols = st.columns(3)
+        with fcols[0]:
+            if period_col and period_col in pbp_df.columns:
+                per_opts = ['TODOS'] + sorted(pd.to_numeric(pbp_df[period_col], errors='coerce').dropna().astype(int).unique().tolist())
+                sel_periodo = st.selectbox('Número de periodo', per_opts, index=0, key='pos_sel_per')
+            else:
+                sel_periodo = 'TODOS'
+        with fcols[1]:
+            if situ_col and situ_col in pbp_df.columns:
+                situ_vals = pbp_df[situ_col].astype(str).fillna('').unique().tolist()
+                situ_opts = ['TODOS'] + sorted([s for s in situ_vals if s != ''])
+                sel_situ = st.selectbox('Situacion marcador', situ_opts, index=0, key='pos_sel_situ')
+            else:
+                sel_situ = 'TODOS'
+        with fcols[2]:
+            if u2m_col and u2m_col in pbp_df.columns:
+                u2_vals = pbp_df[u2m_col].astype(str).fillna('').unique().tolist()
+                u2_opts = ['TODOS'] + sorted([u for u in u2_vals if u != ''])
+                sel_u2m = st.selectbox('Momento del periodo', u2_opts, index=0, key='pos_sel_u2m')
+            else:
+                sel_u2m = 'TODOS'
+        submitted = st.form_submit_button('Aplicar filtros')
+        if submitted:
+            _stay_estadistica()
+
+    d = preparar_tiros(pbp_df)
+    if not d.empty:
+        if sel_periodo != 'TODOS' and period_col:
+            try:
+                d = d[pd.to_numeric(d[period_col], errors='coerce') == int(sel_periodo)]
+            except Exception:
+                pass
+        if sel_situ != 'TODOS' and situ_col:
+            d = d[d[situ_col].astype(str) == str(sel_situ)]
+        if sel_u2m != 'TODOS' and u2m_col:
+            d = d[d[u2m_col].astype(str) == str(sel_u2m)]
 
     if d.empty:
         st.info("No hay tiros de campo con tiempo de posesión calculado para este filtro.")
@@ -105,7 +110,25 @@ def render_posesion(tablas: Dict[str, pd.DataFrame]) -> None:
     d['Equipo'] = np.where(d['Condicion'] == 'LOCAL', local_name, np.where(d['Condicion'] == 'VISITANTE', visitante_name, 'Otro'))
     d = d[d['Equipo'] != 'Otro']
 
-    resumen_equipo = _resumen_por_bucket(d, ['Equipo', 'bucket_posesion'])
+    # Las posesiones "a revisar" (>24s, básicamente imposibles en básquet) se
+    # excluyen de los gráficos y del resumen para no distorsionar los
+    # porcentajes; quedan disponibles aparte para poder auditar la carga.
+    revisar = d[d['bucket_posesion'] == BUCKET_A_REVISAR]
+    d_validos = d[d['bucket_posesion'] != BUCKET_A_REVISAR]
+
+    if not revisar.empty:
+        st.warning(
+            f"⚠️ Se detectaron {len(revisar)} tiro(s) con más de 24s de posesión previa, algo imposible en "
+            "básquet (el reloj de posesión nunca supera los 24s). Probablemente falte un evento en la carga "
+            "del partido (un rebote, una recuperación o una pérdida). Se excluyeron de los gráficos y del "
+            "resumen; el detalle está más abajo para poder revisarlos."
+        )
+
+    if d_validos.empty:
+        st.info("No hay tiros de campo válidos (fuera de los casos a revisar) para este filtro.")
+        return
+
+    resumen_equipo = resumen_por_bucket(d_validos, ['Equipo', 'bucket_posesion'])
 
     st.write("")
     col1, col2 = st.columns(2)
@@ -114,7 +137,7 @@ def render_posesion(tablas: Dict[str, pd.DataFrame]) -> None:
             alt.Chart(resumen_equipo)
             .mark_bar()
             .encode(
-                x=alt.X('bucket_posesion:N', title='Tiempo de posesión antes del tiro', sort=BUCKETS_POSESION),
+                x=alt.X('bucket_posesion:N', title='Tiempo de posesión antes del tiro', sort=BUCKETS_VALIDOS),
                 xOffset=alt.XOffset('Equipo:N', sort=[local_name, visitante_name]),
                 y=alt.Y('%Efectividad:Q', title='Efectividad (%)'),
                 color=alt.Color('Equipo:N', scale=color_scale_equipo, legend=alt.Legend(orient='top', title=None)),
@@ -134,7 +157,7 @@ def render_posesion(tablas: Dict[str, pd.DataFrame]) -> None:
             alt.Chart(resumen_equipo)
             .mark_bar()
             .encode(
-                x=alt.X('bucket_posesion:N', title='Tiempo de posesión antes del tiro', sort=BUCKETS_POSESION),
+                x=alt.X('bucket_posesion:N', title='Tiempo de posesión antes del tiro', sort=BUCKETS_VALIDOS),
                 xOffset=alt.XOffset('Equipo:N', sort=[local_name, visitante_name]),
                 y=alt.Y('Intentos:Q', title='Tiros de campo intentados'),
                 color=alt.Color('Equipo:N', scale=color_scale_equipo, legend=alt.Legend(orient='top', title=None)),
@@ -149,12 +172,12 @@ def render_posesion(tablas: Dict[str, pd.DataFrame]) -> None:
         )
         st.altair_chart(chart_vol, use_container_width=True)
 
-    resumen_tipo = _resumen_por_bucket(d, ['bucket_posesion', 'Tipo'])
+    resumen_tipo = resumen_por_bucket(d_validos, ['bucket_posesion', 'Tipo'])
     chart_tipo = (
         alt.Chart(resumen_tipo)
         .mark_bar()
         .encode(
-            x=alt.X('bucket_posesion:N', title='Tiempo de posesión antes del tiro', sort=BUCKETS_POSESION),
+            x=alt.X('bucket_posesion:N', title='Tiempo de posesión antes del tiro', sort=BUCKETS_VALIDOS),
             y=alt.Y('Intentos:Q', title='Tiros intentados', stack='normalize', axis=alt.Axis(format='%')),
             color=alt.Color('Tipo:N', scale=alt.Scale(domain=['2P', '3P'], range=['#1e88e5', '#43a047']), legend=alt.Legend(orient='top', title='Tipo de tiro')),
             order=alt.Order('Tipo:N'),
@@ -166,15 +189,31 @@ def render_posesion(tablas: Dict[str, pd.DataFrame]) -> None:
 
     st.write("")
     st.subheader('Resumen por equipo')
-    tabla = resumen_equipo.sort_values(['Equipo', 'bucket_posesion'], key=lambda s: s.map({v: i for i, v in enumerate(BUCKETS_POSESION)}) if s.name == 'bucket_posesion' else s)
+    orden_bucket = {v: i for i, v in enumerate(BUCKETS_VALIDOS)}
+    tabla = resumen_equipo.sort_values(
+        ['Equipo', 'bucket_posesion'],
+        key=lambda s: s.map(orden_bucket) if s.name == 'bucket_posesion' else s,
+    )
     tabla = tabla.rename(columns={'bucket_posesion': 'Momento'})
     st.dataframe(tabla, use_container_width=True, hide_index=True)
 
     with st.expander('Detalle por jugador'):
-        resumen_jugador = _resumen_por_bucket(d, ['Equipo', 'nombre', 'bucket_posesion'])
+        resumen_jugador = resumen_por_bucket(d_validos, ['Equipo', 'nombre', 'bucket_posesion'])
         resumen_jugador = resumen_jugador.rename(columns={'nombre': 'Nombre', 'bucket_posesion': 'Momento'})
         st.dataframe(
             resumen_jugador.sort_values(['Equipo', 'Nombre', 'Momento']),
             use_container_width=True,
             hide_index=True,
         )
+
+    if not revisar.empty:
+        with st.expander(f'⚠️ Posesiones a revisar ({len(revisar)})'):
+            cols_show = [c for c in ['autoincremental_id', 'Equipo', 'nombre', 'numero_periodo', 'tiempo_segundos', 'accion_tipo', 'tiempo_posesion'] if c in revisar.columns]
+            st.dataframe(
+                revisar[cols_show].rename(columns={
+                    'autoincremental_id': 'ID jugada', 'nombre': 'Jugador', 'numero_periodo': 'Periodo',
+                    'tiempo_segundos': 'Tiempo partido (s)', 'accion_tipo': 'Tiro', 'tiempo_posesion': 'Posesión (s)',
+                }),
+                use_container_width=True,
+                hide_index=True,
+            )

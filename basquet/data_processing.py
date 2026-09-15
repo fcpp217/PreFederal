@@ -630,16 +630,35 @@ def procesar_pbp_y_agregados(
 # uso real del reloj de posesión (la duración de esa "posesión" la define la
 # falta, no el ataque trabajando el reloj).
 ACCIONES_TIRO_DE_CAMPO = ['CANASTA-2P', 'CANASTA-3P', 'TIRO2-FALLADO', 'TIRO3-FALLADO']
+
+# Eventos que dan inicio a una posesión "nueva" (se mide contra el reloj de
+# posesión real, máximo 24s). El rebote ofensivo se maneja aparte: no
+# reinicia el cronómetro, sino que marca los tiros siguientes como
+# "Reb. Of." (igual que la planilla de referencia del club), ya que esos
+# intentos no compiten realmente contra un reloj de 24s nuevo.
 _ACCIONES_INICIO_POSESION = {
-    'INICIO-PERIODO', 'REBOTE-DEFENSIVO', 'REBOTE-OFENSIVO', 'RECUPERACION',
+    'INICIO-PERIODO', 'REBOTE-DEFENSIVO', 'RECUPERACION',
     'PERDIDA', 'CANASTA-1P', 'CANASTA-2P', 'CANASTA-3P',
 }
+_ACCION_REBOTE_OFENSIVO = 'REBOTE-OFENSIVO'
 
-BUCKETS_POSESION = ['0-8s', '9-16s', '17-24s', '+24s']
+BUCKET_REBOTE_OFENSIVO = 'Reb. Of.'
+BUCKET_A_REVISAR = 'A revisar (>24s)'
+# Los primeros 4 son las categorías "reales"; el último son posesiones que,
+# de por sí, no pueden existir en básquet (el reloj de posesión nunca supera
+# 24s) y casi siempre indican un evento mal cargado en el partido de origen.
+BUCKETS_POSESION = ['0-8s', '9-16s', '17-24s', BUCKET_REBOTE_OFENSIVO, BUCKET_A_REVISAR]
 
 
-def bucket_posesion(segundos: Any) -> Optional[str]:
-    """Ubica un tiempo de posesión (en segundos) en uno de los rangos de BUCKETS_POSESION."""
+def bucket_posesion(segundos: Any, es_reb_ofensivo: bool = False) -> Optional[str]:
+    """Ubica un tiempo de posesión (en segundos) en uno de los rangos de BUCKETS_POSESION.
+
+    `es_reb_ofensivo` indica que el tiro llegó tras un rebote ofensivo propio:
+    en ese caso se clasifica directamente como BUCKET_REBOTE_OFENSIVO, sin
+    importar cuánto tiempo pasó (no se mide contra un reloj de 24s nuevo).
+    """
+    if es_reb_ofensivo:
+        return BUCKET_REBOTE_OFENSIVO
     try:
         if segundos is None or pd.isna(segundos) or segundos < 0:
             return None
@@ -651,17 +670,21 @@ def bucket_posesion(segundos: Any) -> Optional[str]:
         return '9-16s'
     if segundos <= 24:
         return '17-24s'
-    return '+24s'
+    # Un reloj de posesión real nunca llega a superar los 24s: si aparece un
+    # valor mayor, no es una posesión larga válida sino casi siempre una
+    # jugada mal cargada (falta un rebote/recuperación/pérdida en el
+    # historial). Se marca aparte para poder revisarla en el origen.
+    return BUCKET_A_REVISAR
 
 
 def agregar_tiempo_posesion(df: pd.DataFrame) -> pd.DataFrame:
     """Calcula, para cada tiro de campo, cuánto tiempo llevaba la posesión.
 
     Se estima como el tiempo transcurrido desde el último evento que da
-    inicio a una posesión (inicio de período, rebote propio u ajeno,
-    recuperación, pérdida o una canasta convertida) hasta el tiro. Un rebote
-    ofensivo reinicia el conteo: se mide "cuánto tardó ese nuevo intento",
-    no el total acumulado desde el comienzo de la posesión original.
+    inicio a una posesión (inicio de período, rebote defensivo, recuperación,
+    pérdida o una canasta convertida) hasta el tiro. Los tiros que llegan
+    tras un rebote ofensivo propio no se miden contra ese reloj: se marcan
+    como "Reb. Of." (ver BUCKET_REBOTE_OFENSIVO).
     """
     df = df.copy()
     if df.empty or 'accion_tipo' not in df.columns or 'tiempo_segundos' not in df.columns:
@@ -682,7 +705,9 @@ def agregar_tiempo_posesion(df: pd.DataFrame) -> pd.DataFrame:
 
     tiros_campo = set(ACCIONES_TIRO_DE_CAMPO)
     tiempo_posesion: List[Any] = [np.nan] * len(df)
+    bucket: List[Optional[str]] = [None] * len(df)
     posesion_inicio = None
+    origen_reb_ofensivo = False
     partido_actual = None
     periodo_actual = None
 
@@ -694,15 +719,23 @@ def agregar_tiempo_posesion(df: pd.DataFrame) -> pd.DataFrame:
             partido_actual = pid
             periodo_actual = per
             posesion_inicio = t
+            origen_reb_ofensivo = False
 
-        if accion in tiros_campo and posesion_inicio is not None and t is not None and not pd.isna(t):
-            tiempo_posesion[i] = posesion_inicio - t
+        if accion in tiros_campo:
+            if origen_reb_ofensivo:
+                bucket[i] = BUCKET_REBOTE_OFENSIVO
+            elif posesion_inicio is not None and t is not None and not pd.isna(t):
+                tiempo_posesion[i] = posesion_inicio - t
+                bucket[i] = bucket_posesion(tiempo_posesion[i])
 
-        if accion in _ACCIONES_INICIO_POSESION:
+        if accion == _ACCION_REBOTE_OFENSIVO:
+            origen_reb_ofensivo = True
+        elif accion in _ACCIONES_INICIO_POSESION:
             posesion_inicio = t
+            origen_reb_ofensivo = False
 
     df['tiempo_posesion'] = tiempo_posesion
-    df['bucket_posesion'] = [bucket_posesion(v) for v in tiempo_posesion]
+    df['bucket_posesion'] = bucket
     return df
 
 
