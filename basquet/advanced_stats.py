@@ -29,6 +29,51 @@ import pandas as pd
 from .utils import _first_col
 
 
+_STRICT_MAP_CONTEOS = [
+    ('ASISTENCIA', 'asistencias'),
+    ('CANASTA-1P', 'canasta1p'),
+    ('CANASTA-2P', 'canasta2p'),
+    ('CANASTA-3P', 'canasta3p'),
+    ('PERDIDA', 'perdidas'),
+    ('REBOTE-DEFENSIVO', 'rebotedefensivo'),
+    ('REBOTE-OFENSIVO', 'reboteofensivo'),
+    ('RECUPERACION', 'recuperaciones'),
+    ('TIRO1-FALLADO', 'tiro1fallado'),
+    ('TIRO2-FALLADO', 'tiro2fallado'),
+    ('TIRO3-FALLADO', 'tiro3fallado'),
+]
+
+
+def conteos_desde_jugadores_agregado(jg: pd.DataFrame, condicion: str) -> pd.DataFrame:
+    """Arma, por jugador, el mismo esquema de columnas que estadisticas_equipoX_df
+    (canasta2p, tiro2p, etc.) a partir de jugadoresAgregado (conteos de
+    accion_tipo por jugador, ya filtrado por período/situación/momento si
+    corresponde).
+
+    A diferencia de leer directamente la planilla oficial, acá los intentos
+    siempre se calculan como convertidos + fallados: no dependen de que la
+    API exponga (con ese nombre exacto) un campo de intentos aparte, que es
+    lo que hacía fallar el cálculo de Posesiones.
+    """
+    if jg is None or jg.empty or 'Condicion' not in jg.columns or 'nombre' not in jg.columns:
+        return pd.DataFrame()
+    d = jg[jg['Condicion'].astype(str).str.upper() == condicion.upper()].copy()
+    if d.empty:
+        return pd.DataFrame()
+    for src, dst in _STRICT_MAP_CONTEOS:
+        d[dst] = pd.to_numeric(d[src], errors='coerce').fillna(0) if src in d.columns else 0.0
+    d['tiro1p'] = d['canasta1p'] + d['tiro1fallado']
+    d['tiro2p'] = d['canasta2p'] + d['tiro2fallado']
+    d['tiro3p'] = d['canasta3p'] + d['tiro3fallado']
+    d['puntos'] = d['canasta1p'] + 2 * d['canasta2p'] + 3 * d['canasta3p']
+    cols_sum = [
+        'puntos', 'canasta1p', 'tiro1p', 'canasta2p', 'tiro2p', 'canasta3p', 'tiro3p',
+        'rebotedefensivo', 'reboteofensivo', 'asistencias', 'perdidas', 'recuperaciones',
+    ]
+    agg = d.groupby('nombre', as_index=False)[cols_sum].sum()
+    return agg
+
+
 def _sum_col(df: pd.DataFrame, col) -> float:
     if not col or col not in df.columns:
         return 0.0

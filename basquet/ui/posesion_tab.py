@@ -19,7 +19,7 @@ import streamlit as st
 from ..colors import _parse_color, _text_color_for_bg
 from ..data_processing import BUCKET_A_REVISAR, BUCKETS_POSESION
 from ..pdf_export import render_pdf_button
-from ..possession_stats import preparar_tiros, resumen_por_bucket
+from ..possession_stats import preparar_tiros, resumen_por_bucket, resumen_por_bucket_y_tipo
 from ..utils import _first_col, _first_of, _stay_estadistica
 
 BUCKETS_VALIDOS = [b for b in BUCKETS_POSESION if b != BUCKET_A_REVISAR]
@@ -172,33 +172,19 @@ def render_posesion(tablas: Dict[str, pd.DataFrame]) -> None:
         )
         st.altair_chart(chart_vol, use_container_width=True)
 
-    resumen_tipo = resumen_por_bucket(d_validos, ['bucket_posesion', 'Tipo'])
-    chart_tipo = (
-        alt.Chart(resumen_tipo)
-        .mark_bar()
-        .encode(
-            x=alt.X('bucket_posesion:N', title='Tiempo de posesión antes del tiro', sort=BUCKETS_VALIDOS),
-            y=alt.Y('Intentos:Q', title='Tiros intentados', stack='normalize', axis=alt.Axis(format='%')),
-            color=alt.Color('Tipo:N', scale=alt.Scale(domain=['2P', '3P'], range=['#1e88e5', '#43a047']), legend=alt.Legend(orient='top', title='Tipo de tiro')),
-            order=alt.Order('Tipo:N'),
-            tooltip=[alt.Tooltip('bucket_posesion:N', title='Momento'), alt.Tooltip('Tipo:N'), alt.Tooltip('Intentos:Q')],
-        )
-        .properties(height=220, title=alt.TitleParams(text='Selección de tiro (2P vs 3P) según el momento de la posesión', anchor='middle'))
-    )
-    st.altair_chart(chart_tipo, use_container_width=True)
-
     st.write("")
-    st.subheader('Resumen por equipo')
+    st.subheader('Resumen por equipo (2P y 3P por separado)')
     orden_bucket = {v: i for i, v in enumerate(BUCKETS_VALIDOS)}
-    tabla = resumen_equipo.sort_values(
+    resumen_equipo_tipo = resumen_por_bucket_y_tipo(d_validos, ['Equipo', 'bucket_posesion'])
+    resumen_equipo_tipo = resumen_equipo_tipo.sort_values(
         ['Equipo', 'bucket_posesion'],
         key=lambda s: s.map(orden_bucket) if s.name == 'bucket_posesion' else s,
     )
-    tabla = tabla.rename(columns={'bucket_posesion': 'Momento'})
-    st.dataframe(tabla, use_container_width=True, hide_index=True)
+    resumen_equipo_tipo = resumen_equipo_tipo.rename(columns={'bucket_posesion': 'Momento'})
+    st.dataframe(resumen_equipo_tipo, use_container_width=True, hide_index=True)
 
     with st.expander('Detalle por jugador'):
-        resumen_jugador = resumen_por_bucket(d_validos, ['Equipo', 'nombre', 'bucket_posesion'])
+        resumen_jugador = resumen_por_bucket_y_tipo(d_validos, ['Equipo', 'nombre', 'bucket_posesion'])
         resumen_jugador = resumen_jugador.rename(columns={'nombre': 'Nombre', 'bucket_posesion': 'Momento'})
         st.dataframe(
             resumen_jugador.sort_values(['Equipo', 'Nombre', 'Momento']),

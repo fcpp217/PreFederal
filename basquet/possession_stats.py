@@ -42,3 +42,33 @@ def resumen_por_bucket(d: pd.DataFrame, group_cols: List[str]) -> pd.DataFrame:
     agg['%Efectividad'] = np.where(agg['Intentos'] > 0, (agg['Convertidos'] / agg['Intentos'] * 100.0).round(1), 0.0)
     agg['Puntos'] = agg['Puntos'].astype(int)
     return agg
+
+
+def resumen_por_bucket_y_tipo(d: pd.DataFrame, group_cols: List[str]) -> pd.DataFrame:
+    """Igual que resumen_por_bucket, pero separando 2P y 3P en columnas propias
+    (Intentados/Convertidos/% para cada uno) en vez de un total combinado."""
+    tipos = ['2P', '3P']
+    columnas_salida = list(group_cols)
+    for tipo in tipos:
+        columnas_salida += [f'{tipo} Intentados', f'{tipo} Convertidos', f'{tipo} %']
+    if d.empty:
+        return pd.DataFrame(columns=columnas_salida)
+
+    agg = d.groupby(group_cols + ['Tipo'], as_index=False).agg(
+        Intentos=('accion_tipo', 'count'),
+        Convertidos=('Convertido', 'sum'),
+    )
+    base = agg[group_cols].drop_duplicates().reset_index(drop=True)
+    for tipo in tipos:
+        sub = agg[agg['Tipo'] == tipo][group_cols + ['Intentos', 'Convertidos']].rename(
+            columns={'Intentos': f'{tipo} Intentados', 'Convertidos': f'{tipo} Convertidos'}
+        )
+        base = base.merge(sub, on=group_cols, how='left')
+        base[f'{tipo} Intentados'] = base[f'{tipo} Intentados'].fillna(0).astype(int)
+        base[f'{tipo} Convertidos'] = base[f'{tipo} Convertidos'].fillna(0).astype(int)
+        base[f'{tipo} %'] = np.where(
+            base[f'{tipo} Intentados'] > 0,
+            (base[f'{tipo} Convertidos'] / base[f'{tipo} Intentados'] * 100.0).round(1),
+            0.0,
+        )
+    return base[columnas_salida]

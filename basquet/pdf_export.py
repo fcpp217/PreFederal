@@ -38,9 +38,9 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from .advanced_stats import calcular_avanzadas_equipo, totales_raw_equipo
+from .advanced_stats import calcular_avanzadas_equipo, conteos_desde_jugadores_agregado, totales_raw_equipo
 from .colors import _parse_color, _text_color_for_bg
-from .possession_stats import preparar_tiros, resumen_por_bucket
+from .possession_stats import preparar_tiros, resumen_por_bucket_y_tipo
 from .data_processing import BUCKET_A_REVISAR, BUCKETS_POSESION
 from .tables import _build_table
 from .utils import _first_col, _first_of
@@ -293,7 +293,7 @@ def _tabla_posesion(pbp_df: pd.DataFrame, info: Dict[str, Any]):
     if d_validos.empty:
         return None, n_revisar
 
-    resumen = resumen_por_bucket(d_validos, ['Equipo', 'bucket_posesion'])
+    resumen = resumen_por_bucket_y_tipo(d_validos, ['Equipo', 'bucket_posesion'])
     orden = {b: i for i, b in enumerate(BUCKETS_POSESION)}
     resumen = resumen.sort_values(
         ['Equipo', 'bucket_posesion'],
@@ -316,11 +316,15 @@ _ORDEN_METRICAS_AVANZADAS = [
 ]
 
 
-def _tabla_avanzadas(est_loc_df: pd.DataFrame, est_vis_df: pd.DataFrame, info: Dict[str, Any]) -> Optional[Table]:
-    if (est_loc_df is None or est_loc_df.empty) and (est_vis_df is None or est_vis_df.empty):
+def _tabla_avanzadas(jg: pd.DataFrame, info: Dict[str, Any]) -> Optional[Table]:
+    if jg is None or jg.empty:
         return None
-    tot_local = totales_raw_equipo(est_loc_df)
-    tot_visit = totales_raw_equipo(est_vis_df)
+    conteos_local = conteos_desde_jugadores_agregado(jg, 'LOCAL')
+    conteos_visit = conteos_desde_jugadores_agregado(jg, 'VISITANTE')
+    if conteos_local.empty and conteos_visit.empty:
+        return None
+    tot_local = totales_raw_equipo(conteos_local)
+    tot_visit = totales_raw_equipo(conteos_visit)
     av_local = calcular_avanzadas_equipo(tot_local, tot_visit)
     av_visit = calcular_avanzadas_equipo(tot_visit, tot_local)
 
@@ -439,7 +443,7 @@ def _construir_pdf(tablas: Dict[str, pd.DataFrame]) -> bytes:
                 normal,
             ))
 
-    tabla_av = _tabla_avanzadas(est_loc_df, est_vis_df, info)
+    tabla_av = _tabla_avanzadas(tablas.get('jugadoresAgregado', pd.DataFrame()), info)
     if tabla_av is not None:
         story.append(PageBreak())
         story.append(Paragraph("Estadísticas avanzadas", title_style))

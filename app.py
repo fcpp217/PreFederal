@@ -35,7 +35,7 @@ if (ejecutar or ('tablas' in st.session_state)):
                 st.cache_data.clear()
 
                 # Resetear filtros de las 3 pestañas al buscar un nuevo partido
-                for k in ['res_sel_per', 'estad_sel_per', 'estad_sel_situ', 'estad_sel_u2m', 'q_sel_per', 'q_sel_situ', 'q_sel_u2m', 'pos_sel_per', 'pos_sel_situ', 'pos_sel_u2m']:
+                for k in ['res_sel_per', 'estad_sel_per', 'estad_sel_situ', 'estad_sel_u2m', 'q_sel_per', 'q_sel_situ', 'q_sel_u2m', 'pos_sel_per', 'pos_sel_situ', 'pos_sel_u2m', 'av_sel_per', 'av_sel_situ', 'av_sel_u2m']:
                     try:
                         if k in st.session_state:
                             del st.session_state[k]
@@ -61,6 +61,9 @@ if (ejecutar or ('tablas' in st.session_state)):
                 st.session_state['pos_sel_per'] = 'TODOS'
                 st.session_state['pos_sel_situ'] = 'TODOS'
                 st.session_state['pos_sel_u2m'] = 'TODOS'
+                st.session_state['av_sel_per'] = 'TODOS'
+                st.session_state['av_sel_situ'] = 'TODOS'
+                st.session_state['av_sel_u2m'] = 'TODOS'
             except Exception as e:
                 # Mostrar error y detalle para diagnóstico
                 st.error("ID de Partido no encontrado")

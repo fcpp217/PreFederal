@@ -1,7 +1,12 @@
 """Pestaña 'Avanzadas': posesiones, eficiencia ofensiva/defensiva, eFG%, TS%, etc.
 
 Replica los cálculos de la hoja "PartidoUnicoAvanzadas" de la planilla del
-club, a partir de las estadísticas oficiales por jugador de cada equipo.
+club, a partir de jugadoresAgregado (mismo origen que las pestañas
+Jugadores y Quintetos), con los mismos 3 filtros: número de período,
+situación del marcador y momento del período. Se usa jugadoresAgregado en
+vez de la planilla oficial final porque ahí los intentos de tiro se pueden
+calcular siempre como convertidos + fallados (garantizado), y porque así
+se pueden aplicar los filtros.
 """
 
 from typing import Dict
@@ -10,10 +15,10 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from ..advanced_stats import calcular_avanzadas_equipo, calcular_avanzadas_jugador, totales_raw_equipo
+from ..advanced_stats import calcular_avanzadas_equipo, calcular_avanzadas_jugador, conteos_desde_jugadores_agregado, totales_raw_equipo
 from ..colors import _parse_color, _text_color_for_bg
 from ..pdf_export import render_pdf_button
-from ..utils import _first_of
+from ..utils import _first_col, _first_of, _stay_estadistica
 
 METRICAS_PORCENTAJE = {
     '% Rebotes Defensivos', '% Rebotes Ofensivos', '% Rebotes Totales',
@@ -40,6 +45,7 @@ def render_avanzadas(tablas: Dict[str, pd.DataFrame]) -> None:
     part_df = tablas.get('partido', pd.DataFrame())
     est_loc_df = tablas.get('estadisticas_equipolocal', pd.DataFrame())
     est_vis_df = tablas.get('estadisticas_equipovisitante', pd.DataFrame())
+    jg = tablas.get('jugadoresAgregado', pd.DataFrame())
 
     row = part_df.iloc[0] if not part_df.empty else {}
     local_name = str(_first_of(row, ['local', 'equipo_local', 'nombre_local'], ''))
@@ -63,19 +69,67 @@ def render_avanzadas(tablas: Dict[str, pd.DataFrame]) -> None:
     </div>
     """, unsafe_allow_html=True)
 
-    if est_loc_df.empty and est_vis_df.empty:
-        st.info("No hay estadísticas oficiales por jugador para calcular las métricas avanzadas.")
+    if jg.empty:
+        st.info("No hay datos agregados por jugador para calcular las métricas avanzadas.")
         return
 
-    tot_local = totales_raw_equipo(est_loc_df)
-    tot_visit = totales_raw_equipo(est_vis_df)
+    period_col = _first_col(jg, ['numero_periodo', 'periodo', 'Periodo'])
+    situ_col = _first_col(jg, ['SituacionMarcador', 'Situacion marcador', 'situacion_marcador', 'situacionMarcador', 'situacion', 'Situacion'])
+    u2m_col = _first_col(jg, ['ultimos_dos_minutos', 'ultimos2min', 'ultimos_dos', 'u2m'])
+
+    with st.form(key='avanzadas_filters'):
+        fcols = st.columns(3)
+        with fcols[0]:
+            if period_col and period_col in jg.columns:
+                per_opts = ['TODOS'] + sorted(pd.to_numeric(jg[period_col], errors='coerce').dropna().astype(int).unique().tolist())
+                sel_periodo = st.selectbox('Número de periodo', per_opts, index=0, key='av_sel_per')
+            else:
+                sel_periodo = 'TODOS'
+        with fcols[1]:
+            if situ_col and situ_col in jg.columns:
+                situ_vals = jg[situ_col].astype(str).fillna('').unique().tolist()
+                situ_opts = ['TODOS'] + sorted([s for s in situ_vals if s != ''])
+                sel_situ = st.selectbox('Situacion marcador', situ_opts, index=0, key='av_sel_situ')
+            else:
+                sel_situ = 'TODOS'
+        with fcols[2]:
+            if u2m_col and u2m_col in jg.columns:
+                u2_vals = jg[u2m_col].astype(str).fillna('').unique().tolist()
+                u2_opts = ['TODOS'] + sorted([u for u in u2_vals if u != ''])
+                sel_u2m = st.selectbox('Momento del periodo', u2_opts, index=0, key='av_sel_u2m')
+            else:
+                sel_u2m = 'TODOS'
+        submitted = st.form_submit_button('Aplicar filtros')
+        if submitted:
+            _stay_estadistica()
+
+    jg_f = jg.copy()
+    if sel_periodo != 'TODOS' and period_col:
+        try:
+            jg_f = jg_f[pd.to_numeric(jg_f[period_col], errors='coerce') == int(sel_periodo)]
+        except Exception:
+            pass
+    if sel_situ != 'TODOS' and situ_col:
+        jg_f = jg_f[jg_f[situ_col].astype(str) == str(sel_situ)]
+    if sel_u2m != 'TODOS' and u2m_col:
+        jg_f = jg_f[jg_f[u2m_col].astype(str) == str(sel_u2m)]
+
+    conteos_local = conteos_desde_jugadores_agregado(jg_f, 'LOCAL')
+    conteos_visit = conteos_desde_jugadores_agregado(jg_f, 'VISITANTE')
+    if conteos_local.empty and conteos_visit.empty:
+        st.info("No hay jugadas para este filtro.")
+        return
+
+    tot_local = totales_raw_equipo(conteos_local)
+    tot_visit = totales_raw_equipo(conteos_visit)
     av_local = calcular_avanzadas_equipo(tot_local, tot_visit)
     av_visit = calcular_avanzadas_equipo(tot_visit, tot_local)
 
     st.write("")
     st.caption(
         "Posesiones = Tiros de campo intentados + 0.44 × Tiros libres intentados − Rebotes ofensivos + Pérdidas. "
-        "Eficiencia = puntos por posesión (no está multiplicada por 100)."
+        "Eficiencia = puntos por posesión (no está multiplicada por 100). % Bloqueos no está disponible con "
+        "este origen de datos y siempre muestra 0%."
     )
 
     color_scale_equipo = alt.Scale(domain=[local_name, visitante_name], range=[color_local, color_visitante])
@@ -121,7 +175,7 @@ def render_avanzadas(tablas: Dict[str, pd.DataFrame]) -> None:
     col1, col2 = st.columns(2)
     with col1:
         st.markdown(f"**LOCAL - {local_name}**")
-        jug_local = calcular_avanzadas_jugador(est_loc_df)
+        jug_local = calcular_avanzadas_jugador(conteos_local)
         if not jug_local.empty:
             jug_local = jug_local.sort_values('TS%', ascending=False).copy()
             for c in ['3p/FG%', 'eFG%', 'TS%', 'FT%']:
@@ -131,7 +185,7 @@ def render_avanzadas(tablas: Dict[str, pd.DataFrame]) -> None:
             st.info('Sin datos.')
     with col2:
         st.markdown(f"**VISITANTE - {visitante_name}**")
-        jug_visit = calcular_avanzadas_jugador(est_vis_df)
+        jug_visit = calcular_avanzadas_jugador(conteos_visit)
         if not jug_visit.empty:
             jug_visit = jug_visit.sort_values('TS%', ascending=False).copy()
             for c in ['3p/FG%', 'eFG%', 'TS%', 'FT%']:
