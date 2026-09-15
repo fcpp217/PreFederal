@@ -7,7 +7,7 @@ agregar el tiempo jugado / rendimiento por jugador y por quinteto.
 
 import re
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -622,6 +622,90 @@ def procesar_pbp_y_agregados(
 
     return df, df_JugadoresFinal, df_TiempoQuintetos
 
+
+# ------------------------------
+# Tiempo de posesión antes de cada tiro
+# ------------------------------
+# Tiros de campo: los tiros libres (1P) quedan afuera porque no reflejan un
+# uso real del reloj de posesión (la duración de esa "posesión" la define la
+# falta, no el ataque trabajando el reloj).
+ACCIONES_TIRO_DE_CAMPO = ['CANASTA-2P', 'CANASTA-3P', 'TIRO2-FALLADO', 'TIRO3-FALLADO']
+_ACCIONES_INICIO_POSESION = {
+    'INICIO-PERIODO', 'REBOTE-DEFENSIVO', 'REBOTE-OFENSIVO', 'RECUPERACION',
+    'PERDIDA', 'CANASTA-1P', 'CANASTA-2P', 'CANASTA-3P',
+}
+
+BUCKETS_POSESION = ['0-8s', '9-16s', '17-24s', '+24s']
+
+
+def bucket_posesion(segundos: Any) -> Optional[str]:
+    """Ubica un tiempo de posesión (en segundos) en uno de los rangos de BUCKETS_POSESION."""
+    try:
+        if segundos is None or pd.isna(segundos) or segundos < 0:
+            return None
+    except Exception:
+        return None
+    if segundos <= 8:
+        return '0-8s'
+    if segundos <= 16:
+        return '9-16s'
+    if segundos <= 24:
+        return '17-24s'
+    return '+24s'
+
+
+def agregar_tiempo_posesion(df: pd.DataFrame) -> pd.DataFrame:
+    """Calcula, para cada tiro de campo, cuánto tiempo llevaba la posesión.
+
+    Se estima como el tiempo transcurrido desde el último evento que da
+    inicio a una posesión (inicio de período, rebote propio u ajeno,
+    recuperación, pérdida o una canasta convertida) hasta el tiro. Un rebote
+    ofensivo reinicia el conteo: se mide "cuánto tardó ese nuevo intento",
+    no el total acumulado desde el comienzo de la posesión original.
+    """
+    df = df.copy()
+    if df.empty or 'accion_tipo' not in df.columns or 'tiempo_segundos' not in df.columns:
+        df['tiempo_posesion'] = np.nan
+        df['bucket_posesion'] = None
+        return df
+
+    if 'autoincremental_id_num' in df.columns:
+        order_cols = ['_id', 'numero_periodo', 'autoincremental_id_num']
+    else:
+        order_cols = ['_id', 'numero_periodo', 'tiempo_segundos']
+    df = df.sort_values(by=[c for c in order_cols if c in df.columns]).reset_index(drop=True)
+
+    tiempos = df['tiempo_segundos'].tolist()
+    acciones = df['accion_tipo'].astype(str).tolist()
+    partidos = df.get('_id', pd.Series('', index=df.index)).tolist()
+    periodos = df.get('numero_periodo', pd.Series(0, index=df.index)).tolist()
+
+    tiros_campo = set(ACCIONES_TIRO_DE_CAMPO)
+    tiempo_posesion: List[Any] = [np.nan] * len(df)
+    posesion_inicio = None
+    partido_actual = None
+    periodo_actual = None
+
+    for i, accion in enumerate(acciones):
+        pid = partidos[i]
+        per = periodos[i]
+        t = tiempos[i]
+        if pid != partido_actual or per != periodo_actual:
+            partido_actual = pid
+            periodo_actual = per
+            posesion_inicio = t
+
+        if accion in tiros_campo and posesion_inicio is not None and t is not None and not pd.isna(t):
+            tiempo_posesion[i] = posesion_inicio - t
+
+        if accion in _ACCIONES_INICIO_POSESION:
+            posesion_inicio = t
+
+    df['tiempo_posesion'] = tiempo_posesion
+    df['bucket_posesion'] = [bucket_posesion(v) for v in tiempo_posesion]
+    return df
+
+
 def descargar_y_transformar(partido_id: str) -> Dict[str, pd.DataFrame]:
     # Descargas: ambos endpoints son independientes, se piden en paralelo
     # para no pagar dos veces la latencia de red de forma secuencial.
@@ -685,6 +769,7 @@ def descargar_y_transformar(partido_id: str) -> Dict[str, pd.DataFrame]:
                 (600 - tiempo_num) + (periodo_num - 1) * 600,
                 2400 + (300 - tiempo_num) + (periodo_num - 5) * 300
             )
+        pbp_df = agregar_tiempo_posesion(pbp_df)
 
     return {
         'partido': partido_df,

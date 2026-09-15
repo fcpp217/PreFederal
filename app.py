@@ -2,6 +2,7 @@ import streamlit as st
 
 from basquet.data_processing import descargar_y_transformar
 from basquet.ui.estadisticas_tab import render_estadisticas
+from basquet.ui.posesion_tab import render_posesion
 from basquet.ui.quintetos_tab import render_quintetos
 from basquet.ui.resumen_tab import render_resumen
 
@@ -33,7 +34,7 @@ if (ejecutar or ('tablas' in st.session_state)):
                 st.cache_data.clear()
 
                 # Resetear filtros de las 3 pestañas al buscar un nuevo partido
-                for k in ['res_sel_per', 'estad_sel_per', 'estad_sel_situ', 'estad_sel_u2m', 'q_sel_per', 'q_sel_situ', 'q_sel_u2m']:
+                for k in ['res_sel_per', 'estad_sel_per', 'estad_sel_situ', 'estad_sel_u2m', 'q_sel_per', 'q_sel_situ', 'q_sel_u2m', 'pos_sel_per']:
                     try:
                         if k in st.session_state:
                             del st.session_state[k]
@@ -56,6 +57,7 @@ if (ejecutar or ('tablas' in st.session_state)):
                 st.session_state['q_sel_per'] = 'TODOS'
                 st.session_state['q_sel_situ'] = 'TODOS'
                 st.session_state['q_sel_u2m'] = 'TODOS'
+                st.session_state['pos_sel_per'] = 'TODOS'
             except Exception as e:
                 # Mostrar error y detalle para diagnóstico
                 st.error("ID de Partido no encontrado")
@@ -65,14 +67,14 @@ if (ejecutar or ('tablas' in st.session_state)):
 
     if tablas is not None:
         # Mantener orden fijo pero mostrando primero 'Resumen' al abrir la app
-        # Pestañas: Resumen, Estadisticas por jugador, Estadistica por Quintetos
-        nombres = ["Resumen", "Estadisticas por jugador", "Estadistica por Quintetos"]
+        nombres = ["Resumen", "Estadisticas por jugador", "Estadistica por Quintetos", "Posesión"]
         # Mostrar pestañas
         tabs = st.tabs(nombres)
         # Referencias por nombre
         t_resumen = tabs[0]
         t_estadistica = tabs[1]
         t_quintetos = tabs[2]
+        t_posesion = tabs[3]
 
         with t_resumen:
             render_resumen(tablas)
@@ -82,5 +84,8 @@ if (ejecutar or ('tablas' in st.session_state)):
 
         with t_quintetos:
             render_quintetos(tablas)
+
+        with t_posesion:
+            render_posesion(tablas)
 else:
     st.info("Ingrese un ID de partido, presione 'Descargar y procesar' o use los datos ya descargados previamente.")
