@@ -8,13 +8,13 @@ import pandas as pd
 import streamlit as st
 
 from ..colors import _adjust_color, _parse_color, _text_color_for_bg
-from ..pdf_export import render_pdf_button
+from ..exports_ui import render_export_buttons
 from ..utils import _first_col, _first_of, to_seconds
 
 
 def render_resumen(tablas: Dict[str, pd.DataFrame]) -> None:
     # Botón de descarga PDF
-    render_pdf_button(tablas, key='resumen')
+    render_export_buttons(tablas, key='resumen')
     
     part_df = tablas.get('partido', pd.DataFrame())
     pbp_df = tablas.get('pbp', pd.DataFrame())

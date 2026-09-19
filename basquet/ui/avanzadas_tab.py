@@ -17,7 +17,8 @@ import streamlit as st
 
 from ..advanced_stats import calcular_avanzadas_equipo, calcular_avanzadas_jugador, conteos_desde_jugadores_agregado, totales_raw_equipo
 from ..colors import _parse_color, _text_color_for_bg
-from ..pdf_export import render_pdf_button
+from ..exports_ui import render_export_buttons
+from ..metric_definitions import render_definiciones_markdown
 from ..utils import _first_col, _first_of, _stay_estadistica
 
 METRICAS_PORCENTAJE = {
@@ -40,7 +41,7 @@ def _fmt(nombre: str, valor: float) -> str:
 
 
 def render_avanzadas(tablas: Dict[str, pd.DataFrame]) -> None:
-    render_pdf_button(tablas, key='avanzadas')
+    render_export_buttons(tablas, key='avanzadas')
 
     part_df = tablas.get('partido', pd.DataFrame())
     est_loc_df = tablas.get('estadisticas_equipolocal', pd.DataFrame())
@@ -193,3 +194,6 @@ def render_avanzadas(tablas: Dict[str, pd.DataFrame]) -> None:
             st.dataframe(jug_visit, use_container_width=True, hide_index=True)
         else:
             st.info('Sin datos.')
+
+    with st.expander('ℹ️ Qué significa cada métrica'):
+        st.markdown(render_definiciones_markdown(['Avanzadas']))

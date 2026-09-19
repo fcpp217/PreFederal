@@ -8,14 +8,14 @@ import pandas as pd
 import streamlit as st
 
 from ..colors import _parse_color, _text_color_for_bg
-from ..pdf_export import render_pdf_button
+from ..exports_ui import render_export_buttons
 from ..tables import _build_table, build_column_config
 from ..utils import _first_col, _first_of
 
 
 def render_estadisticas(tablas: Dict[str, pd.DataFrame]) -> None:
         # Botón de descarga PDF
-        render_pdf_button(tablas, key='estadistica')
+        render_export_buttons(tablas, key='estadistica')
     
         part_df = tablas.get('partido', pd.DataFrame())
         local_title = str(part_df.iloc[0].get('local')) if not part_df.empty else 'Local'
