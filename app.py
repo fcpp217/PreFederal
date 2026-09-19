@@ -2,6 +2,7 @@ import streamlit as st
 
 from basquet.data_processing import descargar_y_transformar
 from basquet.ui.avanzadas_tab import render_avanzadas
+from basquet.ui.definiciones_tab import render_definiciones
 from basquet.ui.estadisticas_tab import render_estadisticas
 from basquet.ui.posesion_tab import render_posesion
 from basquet.ui.quintetos_tab import render_quintetos
@@ -73,7 +74,7 @@ if (ejecutar or ('tablas' in st.session_state)):
 
     if tablas is not None:
         # Mantener orden fijo pero mostrando primero 'Resumen' al abrir la app
-        nombres = ["Resumen", "Estadisticas por jugador", "Estadistica por Quintetos", "Posesión", "Avanzadas"]
+        nombres = ["Resumen", "Estadisticas por jugador", "Estadistica por Quintetos", "Posesión", "Avanzadas", "Definiciones"]
         # Mostrar pestañas
         tabs = st.tabs(nombres)
         # Referencias por nombre
@@ -82,6 +83,7 @@ if (ejecutar or ('tablas' in st.session_state)):
         t_quintetos = tabs[2]
         t_posesion = tabs[3]
         t_avanzadas = tabs[4]
+        t_definiciones = tabs[5]
 
         with t_resumen:
             render_resumen(tablas)
@@ -97,5 +99,8 @@ if (ejecutar or ('tablas' in st.session_state)):
 
         with t_avanzadas:
             render_avanzadas(tablas)
+
+        with t_definiciones:
+            render_definiciones(tablas)
 else:
     st.info("Ingrese un ID de partido, presione 'Descargar y procesar' o use los datos ya descargados previamente.")

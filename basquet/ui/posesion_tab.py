@@ -18,7 +18,8 @@ import streamlit as st
 
 from ..colors import _parse_color, _text_color_for_bg
 from ..data_processing import BUCKET_A_REVISAR, BUCKETS_POSESION
-from ..pdf_export import render_pdf_button
+from ..exports_ui import render_export_buttons
+from ..metric_definitions import render_definiciones_markdown
 from ..possession_stats import preparar_tiros, resumen_por_bucket, resumen_por_bucket_y_tipo
 from ..utils import _first_col, _first_of, _stay_estadistica
 
@@ -26,7 +27,7 @@ BUCKETS_VALIDOS = [b for b in BUCKETS_POSESION if b != BUCKET_A_REVISAR]
 
 
 def render_posesion(tablas: Dict[str, pd.DataFrame]) -> None:
-    render_pdf_button(tablas, key='posesion')
+    render_export_buttons(tablas, key='posesion')
 
     pbp_df = tablas.get('pbp', pd.DataFrame())
     part_df = tablas.get('partido', pd.DataFrame())
@@ -203,3 +204,6 @@ def render_posesion(tablas: Dict[str, pd.DataFrame]) -> None:
                 use_container_width=True,
                 hide_index=True,
             )
+
+    with st.expander('ℹ️ Qué significa cada métrica'):
+        st.markdown(render_definiciones_markdown(['Posesión (tiempo de posesión antes del tiro)']))

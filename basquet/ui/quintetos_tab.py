@@ -10,13 +10,13 @@ import pandas as pd
 import streamlit as st
 
 from ..colors import _parse_color, _text_color_for_bg
-from ..pdf_export import render_pdf_button
+from ..exports_ui import render_export_buttons
 from ..tables import build_column_config
 from ..utils import _first_col, _first_of, _stay_estadistica
 
 
 def render_quintetos(tablas: Dict[str, pd.DataFrame]) -> None:
-        render_pdf_button(tablas, key='quintetos')
+        render_export_buttons(tablas, key='quintetos')
     
         part_df = tablas.get('partido', pd.DataFrame())
         local_title = str(part_df.iloc[0].get('local')) if not part_df.empty else 'Local'

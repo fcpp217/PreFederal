@@ -24,7 +24,8 @@ def _build_table(df: pd.DataFrame) -> pd.DataFrame:
         'tiro1fallado','tiro2fallado','tiro3fallado',
         'tiro1p','tiro2p','tiro3p',
         'dorsal',
-        'tiempo_jugado'
+        'tiempo_jugado',
+        '_id',
     )]
 
     # columnas base
