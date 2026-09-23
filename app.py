@@ -6,6 +6,7 @@ from basquet.ui.definiciones_tab import render_definiciones
 from basquet.ui.estadisticas_tab import render_estadisticas
 from basquet.ui.posesion_tab import render_posesion
 from basquet.ui.quintetos_tab import render_quintetos
+from basquet.ui.relato_tab import render_relato
 from basquet.ui.resumen_tab import render_resumen
 
 # ------------------------------
@@ -42,6 +43,9 @@ if (ejecutar or ('tablas' in st.session_state)):
                             del st.session_state[k]
                     except Exception:
                         pass
+                # El relato cargado pertenece al partido anterior
+                for k in [k for k in st.session_state.keys() if str(k).startswith('relato_')]:
+                    del st.session_state[k]
 
                 # Limpiar datos anteriores antes de buscar nuevos
                 if 'tablas' in st.session_state:
@@ -74,7 +78,7 @@ if (ejecutar or ('tablas' in st.session_state)):
 
     if tablas is not None:
         # Mantener orden fijo pero mostrando primero 'Resumen' al abrir la app
-        nombres = ["Resumen", "Estadisticas por jugador", "Estadistica por Quintetos", "Posesión", "Avanzadas", "Definiciones"]
+        nombres = ["Resumen", "Estadisticas por jugador", "Estadistica por Quintetos", "Posesión", "Avanzadas", "Relato", "Definiciones"]
         # Mostrar pestañas
         tabs = st.tabs(nombres)
         # Referencias por nombre
@@ -83,7 +87,8 @@ if (ejecutar or ('tablas' in st.session_state)):
         t_quintetos = tabs[2]
         t_posesion = tabs[3]
         t_avanzadas = tabs[4]
-        t_definiciones = tabs[5]
+        t_relato = tabs[5]
+        t_definiciones = tabs[6]
 
         with t_resumen:
             render_resumen(tablas)
@@ -99,6 +104,9 @@ if (ejecutar or ('tablas' in st.session_state)):
 
         with t_avanzadas:
             render_avanzadas(tablas)
+
+        with t_relato:
+            render_relato(tablas)
 
         with t_definiciones:
             render_definiciones(tablas)
